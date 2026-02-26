@@ -1,0 +1,31 @@
+# Reglas del proyecto: Triage Médico
+
+## 1. TypeScript estricto
+
+- Habilitar `"strict": true` en `tsconfig.json`.
+- No usar `any`; preferir tipos explícitos o `unknown` con type guards.
+- Activar `noImplicitAny`, `strictNullChecks`, `strictFunctionTypes` y `strictBindCallApply`.
+- Tipar correctamente props de componentes, respuestas de API y datos de triaje/diagnóstico.
+
+## 2. Interfaz con Shadcn UI
+
+- Usar únicamente componentes de [Shadcn UI](https://ui.shadcn.com/) para la UI.
+- Instalar y usar los componentes desde el CLI de Shadcn (`npx shadcn@latest add`).
+- Mantener la convención de componentes en `components/ui/` y composiciones en `components/`.
+- No introducir otras librerías de componentes (Material UI, Chakra, etc.) para elementos ya cubiertos por Shadcn.
+
+## 3. Seguridad de datos (cumplimiento simulado HIPAA)
+
+- Tratar todos los datos de salud (PHI) como sensibles: cifrado en tránsito (HTTPS) y en reposo donde aplique.
+- No loguear PHI en texto plano; usar identificadores opacos o redacción en logs.
+- Acceso a datos de triaje/diagnóstico solo para usuarios autorizados; validar permisos en backend y en rutas protegidas.
+- No persistir PHI en `localStorage`/`sessionStorage` sin cifrado; preferir sesiones server-side o tokens de corta duración.
+- Documentar en código o README que el cumplimiento HIPAA es simulado/educativo y no sustituye una evaluación legal real.
+
+## 4. Disclaimer obligatorio en diagnósticos
+
+- Cada resultado de triaje o diagnóstico mostrado al usuario debe incluir un **Disclaimer** visible y obligatorio.
+- Texto mínimo a mostrar (o equivalente aprobado):  
+  *"Este resultado no constituye consejo médico profesional. Es solo una herramienta de apoyo. Consulte siempre a un profesional de la salud para un diagnóstico y tratamiento adecuados."*
+- El disclaimer debe ser parte del flujo de resultados (no solo en footer genérico): en el mismo componente o sección donde se muestra el diagnóstico/triaje.
+- No permitir omitir o colapsar permanentemente el disclaimer en pantallas de resultados de triaje/diagnóstico.

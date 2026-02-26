@@ -1,0 +1,22 @@
+// Prisma schema - Triage Médico
+// Por defecto: SQLite (desarrollo). Para Supabase: cambiar provider a "postgresql"
+// y DATABASE_URL a la connection string de Supabase (Settings > Database).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Consulta {
+  id              String   @id @default(cuid())
+  nombre_paciente String
+  dni             String?
+  sintomas        String
+  gravedad_ia     Int      // 1-5 (1 = No urgente, 5 = Resucitación)
+  color_alerta    String   // ej. "green", "yellow", "orange", "red", "darkred"
+  timestamp       DateTime @default(now())
+}

@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --medical-slate-blue: #5b6b84;
+  --medical-sky-blue: #0ea5e9;
+  --medical-sky-light: #e0f2fe;
+  --medical-bg: #f8fafc;
+}
+
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  @apply bg-white text-slate-800 antialiased;
+}
+
+@keyframes blink-bg {
+  0%,
+  100% {
+    background-color: rgb(254 226 226);
+  }
+  50% {
+    background-color: rgb(254 202 202);
+  }
+}
+
+.animate-blink-bg {
+  animation: blink-bg 1.5s ease-in-out infinite;
+}
+
+/* Dashboard: pulso/emergencia para nivel 1 */
+@keyframes pulse-emergency {
+  0%,
+  100% {
+    background-color: rgb(254 226 226);
+    box-shadow: 0 0 0 0 rgb(239 68 68 / 0.4);
+  }
+  50% {
+    background-color: rgb(254 202 202);
+    box-shadow: 0 0 0 8px rgb(239 68 68 / 0);
+  }
+}
+
+.animate-pulse-emergency {
+  animation: pulse-emergency 1.5s ease-in-out infinite;
+}
