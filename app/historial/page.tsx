@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { apiUrl } from "@/lib/api";
 import type { NivelGravedad, RegistroTriage } from "@/lib/types";
 
 const ETIQUETAS_NIVEL: Record<NivelGravedad, string> = {
@@ -58,7 +59,7 @@ export default function HistorialPage(): React.ReactElement {
     let cancelled = false;
     async function fetchData(): Promise<void> {
       try {
-        const res = await fetch("/api/dashboard/pacientes");
+        const res = await fetch(apiUrl("/api/dashboard/pacientes"));
         if (!res.ok) throw new Error("Error al cargar historial");
         const data = (await res.json()) as RegistroTriage[];
         if (!cancelled) {

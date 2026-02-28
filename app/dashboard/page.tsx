@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/table";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { apiUrl } from "@/lib/api";
 import type { NivelGravedad, RegistroTriage } from "@/lib/types";
 
 const ETIQUETAS: Record<NivelGravedad, string> = {
@@ -72,7 +73,7 @@ export default function DashboardPage(): React.ReactElement {
     let cancelled = false;
     async function fetchPacientes(): Promise<void> {
       try {
-        const res = await fetch("/api/dashboard/pacientes");
+        const res = await fetch(apiUrl("/api/dashboard/pacientes"));
         if (!res.ok) throw new Error("Error al cargar");
         const data = (await res.json()) as RegistroTriage[];
         if (!cancelled) {

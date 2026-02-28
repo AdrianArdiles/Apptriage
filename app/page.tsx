@@ -7,6 +7,7 @@ import { TriageResult } from "@/components/triage-result";
 import { ModalConfirmacionIngreso } from "@/components/modal-confirmacion-ingreso";
 import { SpinnerMedico } from "@/components/spinner-medico";
 import type { FormularioEntrada } from "@/components/triage-form";
+import { apiUrl } from "@/lib/api";
 import type { RegistroTriage } from "@/lib/types";
 
 export default function TriagePage(): React.ReactElement {
@@ -25,7 +26,7 @@ export default function TriagePage(): React.ReactElement {
       setRespuestaPendienteConfirmacion(null);
       setModalConfirmacionOpen(false);
       try {
-        const res = await fetch("/api/triage", {
+        const res = await fetch(apiUrl("/api/triage"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(data),
