@@ -65,7 +65,7 @@ export default function TriagePage(): React.ReactElement {
   return (
     <div className="min-h-screen bg-white font-sans">
       <header className="border-b border-slate-200/80 bg-white">
-        <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-4 px-6 py-6 sm:px-8">
+        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 sm:py-6 md:px-8">
           <div className="flex items-center gap-4">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--medical-slate-blue)] text-white">
               <svg
@@ -88,17 +88,17 @@ export default function TriagePage(): React.ReactElement {
             </div>
           </div>
           <nav className="flex items-center gap-2">
-            <Link href="/historial" className="text-sm font-medium text-slate-600 hover:text-slate-900 hover:underline">
+            <Link href="/historial" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-sm font-medium text-slate-600 hover:text-slate-900 hover:underline active:opacity-80">
               Historial de Ingresos
             </Link>
             <Link href="/dashboard">
-              <span className="inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">Dashboard</span>
+              <span className="inline-flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 active:opacity-80">Dashboard</span>
             </Link>
           </nav>
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-6 py-12 sm:px-8">
+      <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 sm:py-12 md:px-8">
         {error && (
           <div
             role="alert"
@@ -132,7 +132,7 @@ export default function TriagePage(): React.ReactElement {
         />
       </main>
 
-      <footer className="mt-16 border-t border-slate-100 bg-slate-50/50 px-6 py-6 text-center text-xs text-slate-500">
+      <footer className="mt-16 border-t border-slate-100 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500 sm:px-6">
         Cumplimiento HIPAA simulado con fines educativos. No sustituye una evaluación legal.
       </footer>
     </div>

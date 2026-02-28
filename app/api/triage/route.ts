@@ -7,6 +7,9 @@ import { categorizarConLLM, nivelNombreAGravedad } from "@/lib/triage-llm";
 import { gravedadToColorAlerta } from "@/lib/color-alerta";
 import { prisma } from "@/lib/prisma";
 
+/** Necesario para permitir build con output: 'export' (app Capacitor). En producción móvil usar backend desplegado. */
+export const dynamic = "force-static";
+
 /**
  * POST /api/triage
  *

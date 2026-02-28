@@ -160,8 +160,8 @@ export function TriageForm({ onSubmit, isSubmitting = false }: TriageFormProps):
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      <Card className="border-slate-200/80 bg-white shadow-md">
+    <form onSubmit={handleSubmit} className="w-full">
+      <Card className="w-full border-slate-200/80 bg-white shadow-md">
         <CardHeader className="border-b border-slate-100 bg-slate-50/30 pb-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--medical-slate-blue)] text-white">
@@ -188,7 +188,7 @@ export function TriageForm({ onSubmit, isSubmitting = false }: TriageFormProps):
           </div>
         </CardHeader>
         <CardContent className="space-y-8 pt-8">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div className="grid gap-2">
               <Label htmlFor="paciente_id" className="font-sans text-slate-700">
                 ID de paciente
@@ -231,7 +231,7 @@ export function TriageForm({ onSubmit, isSubmitting = false }: TriageFormProps):
           <div className="space-y-3">
             <Label className="font-sans text-slate-700">Síntomas</Label>
             <div
-              className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+              className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
               role="group"
               aria-label="Seleccione los síntomas presentes"
             >
@@ -242,7 +242,7 @@ export function TriageForm({ onSubmit, isSubmitting = false }: TriageFormProps):
                     key={s.id}
                     type="button"
                     onClick={() => toggleSintoma(s.id)}
-                    className={`flex items-center gap-3 rounded-xl border-2 p-4 text-left font-sans text-sm transition-all duration-200 ease-out hover:scale-[1.03] ${
+                    className={`flex min-h-[44px] touch-manipulation items-center gap-3 rounded-xl border-2 p-4 text-left font-sans text-base transition-all duration-200 ease-out hover:scale-[1.03] active:scale-[0.98] active:opacity-90 ${
                       selected
                         ? "border-[var(--medical-slate-blue)] bg-sky-100 text-slate-800 shadow-sm"
                         : "border-slate-200 bg-slate-50/80 text-slate-600 hover:border-sky-300 hover:bg-sky-50/80"
@@ -284,7 +284,7 @@ export function TriageForm({ onSubmit, isSubmitting = false }: TriageFormProps):
                       key={op.valor}
                       type="button"
                       onClick={() => setGlasgowE(op.valor)}
-                      className={`rounded-lg border-2 px-3 py-2 text-sm font-medium transition-all duration-200 ${
+                      className={`min-h-[44px] touch-manipulation rounded-lg border-2 px-3 py-2 text-sm font-medium transition-all duration-200 active:scale-[0.98] active:opacity-90 ${
                         glasgowE === op.valor
                           ? "border-[var(--medical-slate-blue)] bg-sky-200/80 text-slate-900"
                           : "border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:bg-sky-100/80"
@@ -305,7 +305,7 @@ export function TriageForm({ onSubmit, isSubmitting = false }: TriageFormProps):
                       key={op.valor}
                       type="button"
                       onClick={() => setGlasgowV(op.valor)}
-                      className={`rounded-lg border-2 px-3 py-2 text-sm font-medium transition-all duration-200 ${
+                      className={`min-h-[44px] touch-manipulation rounded-lg border-2 px-3 py-2 text-sm font-medium transition-all duration-200 active:scale-[0.98] active:opacity-90 ${
                         glasgowV === op.valor
                           ? "border-[var(--medical-slate-blue)] bg-sky-200/80 text-slate-900"
                           : "border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:bg-sky-100/80"
@@ -326,7 +326,7 @@ export function TriageForm({ onSubmit, isSubmitting = false }: TriageFormProps):
                       key={op.valor}
                       type="button"
                       onClick={() => setGlasgowM(op.valor)}
-                      className={`rounded-lg border-2 px-3 py-2 text-sm font-medium transition-all duration-200 ${
+                      className={`min-h-[44px] touch-manipulation rounded-lg border-2 px-3 py-2 text-sm font-medium transition-all duration-200 active:scale-[0.98] active:opacity-90 ${
                         glasgowM === op.valor
                           ? "border-[var(--medical-slate-blue)] bg-sky-200/80 text-slate-900"
                           : "border-slate-200 bg-white text-slate-600 hover:border-sky-300 hover:bg-sky-100/80"
@@ -364,7 +364,7 @@ export function TriageForm({ onSubmit, isSubmitting = false }: TriageFormProps):
             <button
               type="button"
               onClick={() => setShowSignos(!showSignos)}
-              className="text-sm font-medium text-[var(--medical-slate-blue)] hover:underline"
+              className="flex min-h-[44px] touch-manipulation items-center text-base font-medium text-[var(--medical-slate-blue)] hover:underline active:opacity-80"
             >
               {showSignos ? "Ocultar signos vitales" : "+ Añadir signos vitales (opcional)"}
             </button>

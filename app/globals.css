@@ -9,9 +9,28 @@
   --medical-bg: #f8fafc;
 }
 
+/* Mobile-first: texto legible sin zoom (mín. 16px en inputs) */
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   @apply bg-white text-slate-800 antialiased;
+}
+
+/* Área táctil mínima recomendada ~44px */
+.tap-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Respuesta táctil: sin retraso de 300ms en tap */
+button,
+a,
+[role="button"] {
+  touch-action: manipulation;
 }
 
 @keyframes blink-bg {
