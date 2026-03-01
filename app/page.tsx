@@ -32,6 +32,11 @@ export default function TriagePage(): React.ReactElement {
   const [respuestaPendienteConfirmacion, setRespuestaPendienteConfirmacion] =
     React.useState<RegistroTriage | null>(null);
   const [modalConfirmacionOpen, setModalConfirmacionOpen] = React.useState(false);
+  const [buildId, setBuildId] = React.useState<string>("");
+
+  React.useEffect(() => {
+    setBuildId(new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "medium" }));
+  }, []);
 
   const handleSubmit = React.useCallback(async (data: FormularioEntrada) => {
     setError(null);
@@ -47,7 +52,10 @@ export default function TriagePage(): React.ReactElement {
         const errMsg = typeof resData === "object" && resData !== null && "error" in resData
           ? String((resData as { error: unknown }).error)
           : `Error ${status}`;
-        setError(errMsg);
+        const recibido = typeof resData === "object" && resData !== null && "recibido" in resData
+          ? JSON.stringify((resData as { recibido: unknown }).recibido, null, 2)
+          : "";
+        setError(recibido ? `${errMsg}\n\nRecibido:\n${recibido}` : errMsg);
       }
     } catch (e) {
       setError(String(e));
@@ -143,7 +151,8 @@ export default function TriagePage(): React.ReactElement {
       </main>
 
       <footer className="mt-16 border-t border-slate-100 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500 sm:px-6">
-        Cumplimiento HIPAA simulado con fines educativos. No sustituye una evaluación legal.
+        <p>Cumplimiento HIPAA simulado con fines educativos. No sustituye una evaluación legal.</p>
+        <p className="mt-2 text-xs text-slate-400">Build ID: {buildId || "…"}</p>
       </footer>
     </div>
   );

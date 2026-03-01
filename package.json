@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "app:build": "next build && npx cap sync",
+    "build:android": "cross-env IS_CAPACITOR=true npm run build && npx cap sync",
+    "build:android:clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true}); require('fs').rmSync('.next',{recursive:true,force:true});\" && npm run build:android",
     "dev": "next dev",
     "dev:network": "next dev --hostname 0.0.0.0",
     "build": "prisma generate && next build",
@@ -31,6 +33,7 @@
     "tailwind-merge": "^2.5.0"
   },
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "@eslint/eslintrc": "^3.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",

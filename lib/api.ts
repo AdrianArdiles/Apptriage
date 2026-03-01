@@ -3,7 +3,7 @@ import { CapacitorHttp } from "@capacitor/core";
 
 export const API_BASE_URL = "https://apptriage.vercel.app";
 
-/** URL absoluta sin barra final (evita redirección 301/302 que rompe POST en Android). */
+/** URL absoluta sin barra final. */
 export const TRIAGE_API_URL = "https://apptriage.vercel.app/api/triage";
 
 export function apiUrl(path: string): string {
@@ -53,45 +53,48 @@ function cleanData(datos: PayloadTriage): Record<string, unknown> {
 }
 
 /**
- * POST a la API de triaje.
- * En Android/iOS (APK) usa CapacitorHttp para enviar el body desde el cliente nativo
- * y evitar que el WebView envíe el body vacío en POST cross-origin. En web usa fetch.
+ * Función de envío limpia: recibe el objeto de datos, URL con cache-buster, body estrictamente JSON.stringify(data).
+ */
+async function enviarTriage(data: Record<string, unknown>): Promise<{ status: number; data: unknown }> {
+  const url = `https://apptriage.vercel.app/api/triage?t=${Date.now()}`;
+  console.log("Enviando datos reales desde el dispositivo:", data);
+  const headers = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  if (Capacitor.isNativePlatform()) {
+    const response = await CapacitorHttp.request({
+      method: "POST",
+      url,
+      headers,
+      data,
+    });
+    return { status: response.status, data: response.data ?? {} };
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(data),
+  });
+  const resData = await response.json().catch(() => ({}));
+  return { status: response.status, data: resData };
+}
+
+/**
+ * POST a la API de triaje. Solo envía datos reales del formulario (nunca payload de prueba).
  */
 export async function postTriage(datos: PayloadTriage): Promise<{
   status: number;
   data: unknown;
 }> {
   try {
-    const formData = cleanData(datos);
-    console.log("Datos reales a enviar:", JSON.stringify(formData));
-    const headers = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    };
-
-    if (Capacitor.isNativePlatform()) {
-      const response = await CapacitorHttp.request({
-        method: "POST",
-        url: TRIAGE_API_URL,
-        headers,
-        data: formData,
-      });
-      return {
-        status: response.status,
-        data: response.data ?? {},
-      };
+    const data = cleanData(datos);
+    if (!String(data.paciente_id ?? "").trim() || !String(data.sintomas_texto ?? "").trim()) {
+      throw new Error("Faltan paciente_id o sintomas_texto en los datos del formulario.");
     }
-
-    const response = await fetch(TRIAGE_API_URL, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(formData),
-    });
-    const data = await response.json().catch(() => ({}));
-    return {
-      status: response.status,
-      data,
-    };
+    return enviarTriage(data);
   } catch (error) {
     const e = error instanceof Error ? error : new Error(String(error));
     const mensaje = e.message || "Error desconocido";

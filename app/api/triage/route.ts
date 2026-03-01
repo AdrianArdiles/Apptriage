@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
 
+/** CORS abierto para que la APK (Capacitor) y la web puedan llamar sin bloqueos. */
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -40,17 +41,22 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     if (!data || typeof data !== "object") {
       return NextResponse.json(
-        { error: "Faltan campos", recibido: data },
+        { error: "Datos incompletos", recibido: data },
         { status: 400, headers: CORS_HEADERS }
       );
     }
 
+    const nombre = String((data.nombre_paciente ?? data.nombre ?? "").toString()).trim();
+    const dni = String((data.dni ?? "").toString()).trim();
     const tienePacienteId = "paciente_id" in data && data.paciente_id != null && String(data.paciente_id).trim() !== "";
     const tieneSintomas = "sintomas_texto" in data && data.sintomas_texto != null && String(data.sintomas_texto).trim().length >= MIN_SINTOMAS_CARACTERES;
+    const tieneNombre = nombre !== "";
+    const tieneDni = dni !== "";
+    const tieneAlgunIdentificador = tieneNombre || tieneDni;
 
-    if (!tienePacienteId || !tieneSintomas) {
+    if (!tienePacienteId || !tieneSintomas || !tieneAlgunIdentificador) {
       return NextResponse.json(
-        { error: "Faltan campos", recibido: data },
+        { error: "Datos incompletos", recibido: data },
         { status: 400, headers: CORS_HEADERS }
       );
     }
