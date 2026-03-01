@@ -19,7 +19,7 @@ function toPayloadTriage(data: FormularioEntrada): PayloadTriage {
   if (data.nombre_paciente?.trim()) payload.nombre_paciente = data.nombre_paciente.trim();
   if (data.dni?.trim()) payload.dni = data.dni.trim();
   if (data.signos_vitales && Object.keys(data.signos_vitales).length > 0) {
-    payload.signos_vitales = data.signos_vitales;
+    payload.signos_vitales = data.signos_vitales as Record<string, unknown>;
   }
   if (data.glasgow) payload.glasgow = data.glasgow;
   return payload;
