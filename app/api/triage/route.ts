@@ -46,12 +46,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const nombre = String((data.nombre_paciente ?? data.nombre ?? "").toString()).trim();
-    const dni = String((data.dni ?? "").toString()).trim();
+    const nombreVal = String((data.nombre_paciente ?? data.nombre ?? "").toString()).trim();
+    const dniVal = String((data.dni ?? "").toString()).trim();
     const tienePacienteId = "paciente_id" in data && data.paciente_id != null && String(data.paciente_id).trim() !== "";
     const tieneSintomas = "sintomas_texto" in data && data.sintomas_texto != null && String(data.sintomas_texto).trim().length >= MIN_SINTOMAS_CARACTERES;
-    const tieneNombre = nombre !== "";
-    const tieneDni = dni !== "";
+    const tieneNombre = nombreVal !== "";
+    const tieneDni = dniVal !== "";
     const tieneAlgunIdentificador = tieneNombre || tieneDni;
 
     if (!tienePacienteId || !tieneSintomas || !tieneAlgunIdentificador) {
