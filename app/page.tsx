@@ -2,167 +2,236 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ChecklistXABCDE, type DatosEvaluacionInicial } from "@/components/checklist-xabcde";
-import { TriageResult } from "@/components/triage-result";
-import { ModalConfirmacionIngreso } from "@/components/modal-confirmacion-ingreso";
-import { SpinnerMedico } from "@/components/spinner-medico";
-import { postTriage, type PayloadTriage } from "@/lib/api";
-import type { RegistroTriage } from "@/lib/types";
+import { useRouter } from "next/navigation";
+import { getOperadorId, setOperadorId, getUnidadId, setUnidadId, clearOperadorId } from "@/lib/operador-storage";
+import { clearFichaClinica } from "@/lib/ficha-clinica-storage";
+import { validateManagerPin } from "@/lib/manager-auth";
+import { LogoEkg } from "@/components/logo-ekg";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
-/** Construye el payload para la API (Ficha clínica digital: blood_loss, airway_status, pulse, bp_*, glasgow_score, etc.). */
-function toPayloadTriage(data: DatosEvaluacionInicial): PayloadTriage {
-  const payload: PayloadTriage = {
-    paciente_id: data.paciente_id,
-    sintomas_texto: data.sintomas_texto,
-  };
-  if (data.hora_inicio_atencion) payload.hora_inicio_atencion = data.hora_inicio_atencion;
-  const nombre = data.nombre_paciente?.trim();
-  const dni = data.dni?.trim();
-  payload.nombre_paciente = nombre || "Paciente sin identificar";
-  if (dni) payload.dni = dni;
-  if (data.signos_vitales && Object.keys(data.signos_vitales).length > 0) {
-    payload.signos_vitales = data.signos_vitales as Record<string, unknown>;
-  }
-  if (data.glasgow) payload.glasgow = data.glasgow;
-  if (data.glasgow_score != null) payload.glasgow_score = data.glasgow_score;
-  if (data.blood_loss != null) payload.blood_loss = data.blood_loss;
-  if (data.airway_status != null) payload.airway_status = data.airway_status;
-  if (data.respiration_rate != null) payload.respiration_rate = data.respiration_rate;
-  if (data.pulse != null) payload.pulse = data.pulse;
-  if (data.bp_systolic != null) payload.bp_systolic = data.bp_systolic;
-  if (data.bp_diastolic != null) payload.bp_diastolic = data.bp_diastolic;
-  return payload;
-}
+const BG_DARK = "#0f172a";
+const RED_EMERGENCY = "#dc2626";
+const BLUE_MEDICAL = "#2563eb";
 
-export default function TriagePage(): React.ReactElement {
-  const [resultado, setResultado] = React.useState<RegistroTriage | null>(null);
-  const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-  const [respuestaPendienteConfirmacion, setRespuestaPendienteConfirmacion] =
-    React.useState<RegistroTriage | null>(null);
-  const [modalConfirmacionOpen, setModalConfirmacionOpen] = React.useState(false);
-  const [buildId, setBuildId] = React.useState<string>("");
+export default function LandingPage(): React.ReactElement {
+  const router = useRouter();
+  const [idParamedico, setIdParamedico] = React.useState("");
+  const [idUnidad, setIdUnidad] = React.useState("");
+  const [guardStarted, setGuardStarted] = React.useState(false);
+  const [modalGestionOpen, setModalGestionOpen] = React.useState(false);
+  const [pinGestion, setPinGestion] = React.useState("");
+  const [pinError, setPinError] = React.useState(false);
 
   React.useEffect(() => {
-    setBuildId(new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "medium" }));
-  }, []);
-
-  const handleSubmit = React.useCallback(async (data: DatosEvaluacionInicial) => {
-    setError(null);
-    setIsSubmitting(true);
-    try {
-      const formData = toPayloadTriage(data);
-      console.log("Datos reales a enviar:", JSON.stringify(formData));
-      const { status, data: resData } = await postTriage(formData);
-      if (status >= 200 && status < 300) {
-        const payload = resData as { success?: boolean; id?: unknown; registro?: RegistroTriage };
-        setResultado(payload.registro ?? (resData as RegistroTriage));
-      } else {
-        const errMsg = typeof resData === "object" && resData !== null && "error" in resData
-          ? String((resData as { error: unknown }).error)
-          : `Error ${status}`;
-        const recibido = typeof resData === "object" && resData !== null && "recibido" in resData
-          ? JSON.stringify((resData as { recibido: unknown }).recibido, null, 2)
-          : "";
-        setError(recibido ? `${errMsg}\n\nRecibido:\n${recibido}` : errMsg);
-      }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setIsSubmitting(false);
+    const id = getOperadorId();
+    const unidad = getUnidadId();
+    if (id) {
+      setGuardStarted(true);
+      setIdParamedico(id);
+      setIdUnidad(unidad);
     }
   }, []);
 
-  const handleConfirmarIngreso = React.useCallback(() => {
-    if (respuestaPendienteConfirmacion) {
-      setResultado(respuestaPendienteConfirmacion);
-      setRespuestaPendienteConfirmacion(null);
-    }
-    setModalConfirmacionOpen(false);
-  }, [respuestaPendienteConfirmacion]);
+  const handleIniciarTurno = (e: React.FormEvent) => {
+    e.preventDefault();
+    const id = idParamedico.trim();
+    const unidad = idUnidad.trim();
+    if (!id) return;
+    setOperadorId(id);
+    setUnidadId(unidad);
+    setGuardStarted(true);
+    clearFichaClinica();
+    router.push("/atencion?nueva=1");
+  };
 
-  const handleNuevoTriage = React.useCallback(() => {
-    setResultado(null);
-    setError(null);
-    setRespuestaPendienteConfirmacion(null);
-    setModalConfirmacionOpen(false);
-  }, []);
+  const handleNuevaAtencion = () => {
+    clearFichaClinica();
+    router.push("/atencion?nueva=1");
+  };
+
+  const handleCerrarGuardia = () => {
+    clearOperadorId();
+    setIdParamedico("");
+    setIdUnidad("");
+    setGuardStarted(false);
+  };
+
+  const handleAccesoGestion = () => {
+    setModalGestionOpen(true);
+    setPinGestion("");
+    setPinError(false);
+  };
+
+  const handleSubmitPin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPinError(false);
+    if (validateManagerPin(pinGestion)) {
+      setModalGestionOpen(false);
+      setPinGestion("");
+      router.push("/manager");
+    } else {
+      setPinError(true);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-zinc-900 font-sans text-zinc-100">
-      <header className="border-b border-zinc-700 bg-zinc-800/90">
-        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 sm:py-6 md:px-8">
-          <div className="flex items-center gap-4">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-              </svg>
+    <div
+      className="flex min-h-screen flex-col font-sans text-slate-100"
+      style={{ backgroundColor: BG_DARK }}
+    >
+      <main className="flex flex-1 flex-col items-center justify-center px-6 py-12">
+        {/* Logo con degradado rojo-azul */}
+        <div className="mb-6 flex items-center justify-center">
+          <LogoEkg className="h-28 w-28 drop-shadow-[0_0_24px_rgba(37,99,235,0.4)]" />
+        </div>
+        <h1 className="mb-2 text-center text-2xl font-bold tracking-tight text-slate-100 sm:text-3xl">
+          AMBULANCIA PRO
+        </h1>
+        <p className="mb-10 text-sm text-slate-400">Atención prehospitalaria</p>
+
+        {!guardStarted ? (
+          <form onSubmit={handleIniciarTurno} className="w-full max-w-sm space-y-5">
+            <div>
+              <label htmlFor="id-paramedico" className="mb-2 block text-sm font-medium text-slate-300">
+                ID del Paramédico
+              </label>
+              <input
+                id="id-paramedico"
+                type="text"
+                value={idParamedico}
+                onChange={(e) => setIdParamedico(e.target.value)}
+                placeholder="Ej: M-042"
+                className="w-full min-h-[52px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-[#0f172a]"
+                autoComplete="off"
+              />
             </div>
             <div>
-              <h1 className="text-xl font-semibold text-zinc-100">Ficha Clínica Digital</h1>
-              <p className="text-sm text-zinc-400">Ambulancias — XABCDE · Glasgow · Timestamps</p>
+              <label htmlFor="id-unidad" className="mb-2 block text-sm font-medium text-slate-300">
+                N° de Unidad / Móvil
+              </label>
+              <input
+                id="id-unidad"
+                type="text"
+                value={idUnidad}
+                onChange={(e) => setIdUnidad(e.target.value)}
+                placeholder="Ej: U-12 / 600 123 456"
+                className="w-full min-h-[52px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-[#0f172a]"
+                autoComplete="off"
+              />
             </div>
-          </div>
-          <nav className="flex items-center gap-2">
-            <Link href="/historial" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:underline active:opacity-80">
-              Historial
-            </Link>
-            <Link href="/dashboard">
-              <span className="inline-flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-md border border-zinc-600 bg-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-600 active:opacity-80">Dashboard</span>
-            </Link>
-          </nav>
-        </div>
-      </header>
-
-      <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 sm:py-12 md:px-8">
-        <p className="mb-4 text-xs text-zinc-500">Dark mode — datos guardados en este dispositivo</p>
-        {error && (
-          <div
-            role="alert"
-            className="mb-8 rounded-xl border border-red-800 bg-red-900/30 px-4 py-3 text-sm text-red-200"
-          >
-            {error}
-          </div>
-        )}
-
-        {resultado ? (
-          <TriageResult registro={resultado} onNuevoTriage={handleNuevoTriage} />
+            <button
+              type="submit"
+              disabled={!idParamedico.trim()}
+              className="relative w-full min-h-[58px] touch-manipulation rounded-xl px-6 py-4 text-lg font-bold text-white transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50"
+              style={{
+                background: `linear-gradient(135deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)`,
+                boxShadow: "0 0 24px rgba(37, 99, 235, 0.5), 0 0 48px rgba(220, 38, 38, 0.25), 0 4px 12px rgba(0,0,0,0.3)",
+              }}
+            >
+              INICIAR TURNO
+            </button>
+          </form>
         ) : (
-          <div className="relative">
-            {isSubmitting && (
-              <div
-                className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm"
-                aria-live="polite"
-              >
-                <SpinnerMedico label="Enviando reporte a central…" />
-              </div>
-            )}
-            <ChecklistXABCDE onSubmit={handleSubmit} isSubmitting={isSubmitting} />
+          <div className="w-full max-w-sm space-y-6 text-center">
+            <p className="text-sm text-slate-400">
+              Paramédico: <span className="font-medium text-slate-200">{getOperadorId() || "—"}</span>
+              {getUnidadId() && (
+                <> · Unidad: <span className="font-medium text-slate-200">{getUnidadId()}</span></>
+              )}
+            </p>
+            <button
+              type="button"
+              onClick={handleNuevaAtencion}
+              className="relative w-full min-h-[56px] touch-manipulation rounded-xl px-6 py-4 text-lg font-bold text-white transition active:scale-[0.98]"
+              style={{
+                background: `linear-gradient(135deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)`,
+                boxShadow: "0 0 20px rgba(37, 99, 235, 0.4), 0 4px 12px rgba(0,0,0,0.3)",
+              }}
+            >
+              NUEVA ATENCIÓN
+            </button>
+            <Link
+              href="/historial"
+              className="inline-flex min-h-[48px] w-full items-center justify-center rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-sm font-medium text-slate-200 transition hover:border-blue-500/50 hover:bg-slate-700/80 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+            >
+              Ver últimos PDF
+            </Link>
+            <button
+              type="button"
+              onClick={handleCerrarGuardia}
+              className="text-sm text-slate-500 hover:text-slate-400 underline"
+            >
+              Cerrar turno
+            </button>
           </div>
         )}
-
-        <ModalConfirmacionIngreso
-          open={modalConfirmacionOpen}
-          onOpenChange={setModalConfirmacionOpen}
-          registro={respuestaPendienteConfirmacion}
-          onConfirmar={handleConfirmarIngreso}
-        />
       </main>
 
-      <footer className="mt-16 border-t border-zinc-800 bg-zinc-800/50 px-4 py-6 text-center text-sm text-zinc-500 sm:px-6">
-        <p>Ficha clínica para uso en ambulancia. Los datos se guardan localmente hasta enviar.</p>
-        <p className="mt-2 text-xs text-zinc-600">Build: {buildId || "…"}</p>
+      <footer
+        className="flex flex-col items-center gap-2 border-t border-slate-800 px-4 py-5 text-center"
+        style={{ borderColor: "rgba(51, 65, 85, 0.6)" }}
+      >
+        <LogoEkg className="h-10 w-10 opacity-80" />
+        <p className="text-xs text-slate-500">Sistema de Gestión de Emergencias V1.0</p>
+        <button
+          type="button"
+          onClick={handleAccesoGestion}
+          className="mt-1 text-xs text-slate-600 hover:text-slate-400 underline"
+        >
+          Acceso Gestión
+        </button>
       </footer>
+
+      <Dialog open={modalGestionOpen} onOpenChange={setModalGestionOpen}>
+        <DialogContent
+          className="border-slate-700 bg-slate-900 text-slate-100"
+          style={{ backgroundColor: "#1e293b" }}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-slate-100">Acceso Gestión</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Introduzca la clave de 4 dígitos para acceder al Centro de Mando.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleSubmitPin} className="space-y-4">
+            <div>
+              <label htmlFor="manager-pin" className="sr-only">
+                Clave de 4 dígitos
+              </label>
+              <input
+                id="manager-pin"
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                value={pinGestion}
+                onChange={(e) => {
+                  setPinGestion(e.target.value.replace(/\D/g, "").slice(0, 4));
+                  setPinError(false);
+                }}
+                placeholder="••••"
+                className="w-full rounded-xl border-2 border-slate-600 bg-slate-800 px-4 py-3 text-center text-lg tracking-[0.5em] text-white placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+                autoComplete="off"
+              />
+              {pinError && (
+                <p className="mt-2 text-center text-sm text-red-400">Clave incorrecta</p>
+              )}
+            </div>
+            <button
+              type="submit"
+              className="w-full rounded-xl px-4 py-3 text-sm font-semibold text-slate-900"
+              style={{ backgroundColor: "#eab308" }}
+            >
+              Entrar
+            </button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -27,6 +27,8 @@ export interface FichaClinicaPersistida {
   glasgowV: number;
   glasgowM: number;
   timestamp_eventos: TimestampEvento[];
+  /** Paso actual del stepper (0 = inicio, 1–6 = XABCDE, 7 = signos, 8 = Glasgow, 9 = timestamps, 10 = paciente, 11 = enviar). */
+  currentStep: number;
 }
 
 const defaultPersistida: FichaClinicaPersistida = {
@@ -47,6 +49,7 @@ const defaultPersistida: FichaClinicaPersistida = {
   glasgowV: 0,
   glasgowM: 0,
   timestamp_eventos: [],
+  currentStep: 0,
 };
 
 export function loadFichaClinica(): FichaClinicaPersistida | null {

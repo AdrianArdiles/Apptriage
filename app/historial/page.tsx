@@ -2,405 +2,425 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { LogoEkg } from "@/components/logo-ekg";
+import { getOperadorId, getUnidadId } from "@/lib/operador-storage";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+  getHistorialPdfList,
+  removeFromHistorialPdf,
+  type HistorialPdfEntry,
+} from "@/lib/historial-pdf-storage";
+import { getPDFBlob } from "@/lib/pdf-export";
+import { getLogoDataUrl } from "@/lib/logo-image";
+import { generateAndSharePDF } from "@/lib/share-pdf";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { apiUrl } from "@/lib/api";
-import type { NivelGravedad, RegistroTriage } from "@/lib/types";
 
-const ETIQUETAS_NIVEL: Record<NivelGravedad, string> = {
-  1: "No urgente",
-  2: "Prioritario",
-  3: "Urgencia",
-  4: "Emergencia",
-  5: "Resucitación (Inmediato)",
-};
+const BG_DARK = "#0f172a";
+const CARD_BG = "#1e293b";
+const BLUE_MEDICAL = "#2563eb";
+const RED_EMERGENCY = "#dc2626";
 
-/** Color del círculo y texto por nivel (rojo = más grave, verde = menos). */
-const COLOR_CIRCULO: Record<NivelGravedad, { bg: string; text: string }> = {
-  5: { bg: "bg-red-500", text: "text-red-800" },
-  4: { bg: "bg-orange-500", text: "text-orange-800" },
-  3: { bg: "bg-amber-500", text: "text-amber-800" },
-  2: { bg: "bg-teal-500", text: "text-teal-800" },
-  1: { bg: "bg-emerald-500", text: "text-emerald-800" },
-};
+function reportContainsRCP(entry: HistorialPdfEntry): boolean {
+  const events = entry.data.timestamp_eventos ?? [];
+  const hasRcpEvent = events.some((e) => String(e.evento).toUpperCase().includes("RCP"));
+  const text = (entry.data.sintomas_texto ?? "").toUpperCase();
+  return hasRcpEvent || text.includes("RCP");
+}
 
-const PAGE_SIZE = 10;
+function EyeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
 
-function truncar(str: string, max: number): string {
-  if (str.length <= max) return str;
-  return str.slice(0, max).trim() + "…";
+function ShareIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  );
+}
+
+function SearchIcon({ className, style }: { className?: string; style?: React.CSSProperties }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      style={style}
+    >
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+/** Nombre de archivo tipo Reporte_[HORA]_[NOMBRE].pdf */
+function formatFileName(hora: string, paciente: string): string {
+  const safeName = paciente.replace(/\s+/g, "_").replace(/[^\w\u00C0-\u024F\-_.]/gi, "") || "Paciente";
+  return `Reporte_${hora.replace(":", "-")}_${safeName}.pdf`;
 }
 
 export default function HistorialPage(): React.ReactElement {
-  const [registros, setRegistros] = React.useState<RegistroTriage[]>([]);
+  const [list, setList] = React.useState<HistorialPdfEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
   const [busqueda, setBusqueda] = React.useState("");
-  const [filtroGravedad, setFiltroGravedad] = React.useState<NivelGravedad | "todos" | "urgentes">("todos");
-  const [pagina, setPagina] = React.useState(0);
-  const [detalle, setDetalle] = React.useState<RegistroTriage | null>(null);
+  const [actionLoadingId, setActionLoadingId] = React.useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    let cancelled = false;
-    async function fetchData(): Promise<void> {
-      try {
-        const res = await fetch(apiUrl("/api/dashboard/pacientes"));
-        if (!res.ok) throw new Error("Error al cargar historial");
-        const data = (await res.json()) as RegistroTriage[];
-        if (!cancelled) {
-          setRegistros(data);
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Error al cargar");
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    fetchData();
-    return () => {
-      cancelled = true;
-    };
+  const refreshList = React.useCallback(() => {
+    setList(getHistorialPdfList());
   }, []);
 
   const filtrados = React.useMemo(() => {
-    let list = [...registros].sort(
-      (a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()
-    );
     const q = busqueda.trim().toLowerCase();
-    if (q) {
-      list = list.filter((r) => {
-        const nombre = (r.nombre_paciente ?? r.paciente_id).toLowerCase();
-        const dni = (r.dni ?? "").toLowerCase();
-        return nombre.includes(q) || dni.includes(q);
-      });
-    }
-    if (filtroGravedad === "urgentes") {
-      list = list.filter((r) => r.nivel_gravedad === 4 || r.nivel_gravedad === 5);
-    } else if (filtroGravedad !== "todos") {
-      list = list.filter((r) => r.nivel_gravedad === filtroGravedad);
-    }
-    return list;
-  }, [registros, busqueda, filtroGravedad]);
-
-  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / PAGE_SIZE));
-  const paginados = filtrados.slice(pagina * PAGE_SIZE, (pagina + 1) * PAGE_SIZE);
+    if (!q) return list;
+    return list.filter((entry) => {
+      const nombre = (entry.nombrePaciente || entry.pacienteId || "").toLowerCase();
+      return nombre.includes(q);
+    });
+  }, [list, busqueda]);
 
   React.useEffect(() => {
-    if (pagina >= totalPaginas && totalPaginas > 0) setPagina(0);
-  }, [pagina, totalPaginas]);
+    refreshList();
+    setLoading(false);
+  }, [refreshList]);
+
+  const handleAbrir = React.useCallback(async (entry: HistorialPdfEntry) => {
+    setActionLoadingId(entry.id);
+    try {
+      const logoDataUrl = await getLogoDataUrl();
+      const blob = getPDFBlob(entry.data, logoDataUrl ? { logoDataUrl } : undefined);
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      console.error("Error al abrir PDF:", e);
+      alert("No se pudo abrir el PDF.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  }, []);
+
+  const handleCompartir = React.useCallback(async (entry: HistorialPdfEntry) => {
+    setActionLoadingId(entry.id);
+    try {
+      await generateAndSharePDF(entry.data);
+    } catch (e) {
+      console.error("Error al compartir PDF:", e);
+      alert("No se pudo compartir el PDF.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  }, []);
+
+  const handleEliminar = React.useCallback(
+    (id: string) => {
+      removeFromHistorialPdf(id);
+      setDeleteConfirmId(null);
+      refreshList();
+    },
+    [refreshList]
+  );
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white/80 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6">
+    <div
+      className="min-h-screen font-sans text-slate-100"
+      style={{ backgroundColor: BG_DARK }}
+    >
+      {/* Header táctico: logo EKG + Paramédico / Móvil */}
+      <header
+        className="sticky top-0 z-40 border-b px-4 py-3 shadow-sm"
+        style={{ backgroundColor: CARD_BG, borderColor: "rgba(37, 99, 235, 0.3)" }}
+      >
+        <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-600 text-white">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="M16 13H8" />
-                <path d="M16 17H8" />
-                <path d="M10 9H8" />
-              </svg>
+            <Link
+              href="/"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-white transition hover:opacity-90"
+              style={{ backgroundColor: BLUE_MEDICAL }}
+              aria-label="Volver al inicio"
+            >
+              <span className="text-xl leading-none">←</span>
+            </Link>
+            <div
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-white"
+              style={{ backgroundColor: BG_DARK }}
+            >
+              <LogoEkg className="h-5 w-5" />
             </div>
-            <div>
-              <h1 className="text-lg font-semibold text-slate-800">Historial de Ingresos</h1>
-              <p className="text-xs text-slate-500">Registro central de triajes</p>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-slate-200">
+                {getOperadorId() || "—"}{" "}
+                {getUnidadId() && <span className="text-slate-400">· {getUnidadId()}</span>}
+              </p>
+              <p className="text-xs text-slate-500">Últimos PDF</p>
             </div>
           </div>
-          <nav className="flex flex-wrap items-center gap-2">
-            <Link href="/">
-              <Button variant="outline" size="sm">
-                Triaje
-              </Button>
-            </Link>
-            <Link href="/dashboard">
-              <Button variant="outline" size="sm">
-                Dashboard
-              </Button>
-            </Link>
-          </nav>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
-        <Card className="border-slate-200 shadow-sm">
-          <CardHeader className="border-b border-slate-100 bg-white">
-            <CardTitle className="text-slate-800">Registro de pacientes triados</CardTitle>
-            <CardDescription>
-              Búsqueda por nombre o DNI. Filtro por nivel de gravedad. Clic en una fila para ver el detalle.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 p-6">
-            {/* Búsqueda y filtros */}
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="relative flex-1 min-w-[200px]">
-                <Input
-                  type="search"
-                  placeholder="Buscar por nombre o DNI..."
-                  value={busqueda}
-                  onChange={(e) => {
-                    setBusqueda(e.target.value);
-                    setPagina(0);
-                  }}
-                  className="max-w-sm border-slate-200 bg-white"
-                />
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm text-slate-600">Gravedad:</span>
-                <div className="flex flex-wrap gap-1">
-                  <Button
-                    type="button"
-                    variant={filtroGravedad === "todos" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setFiltroGravedad("todos");
-                      setPagina(0);
-                    }}
-                  >
-                    Todos
-                  </Button>
-                  {([5, 4, 3, 2, 1] as NivelGravedad[]).map((n) => (
-                    <Button
-                      key={n}
-                      type="button"
-                      variant={filtroGravedad === n ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => {
-                        setFiltroGravedad(n);
-                        setPagina(0);
-                      }}
-                    >
-                      Nivel {n}
-                    </Button>
-                  ))}
-                  <Button
-                    type="button"
-                    variant={filtroGravedad === "urgentes" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setFiltroGravedad(
-                        filtroGravedad === "urgentes" ? "todos" : "urgentes"
-                      );
-                      setPagina(0);
-                    }}
-                  >
-                    Urgentes (4-5)
-                  </Button>
-                </div>
-              </div>
+      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8 md:px-8">
+        {/* Buscador: lupa azul + input */}
+        {!loading && list.length > 0 && (
+          <div className="mb-6">
+            <label htmlFor="historial-busqueda" className="sr-only">
+              Buscar por nombre del paciente
+            </label>
+            <div
+              className="flex items-center gap-3 rounded-xl border-2 border-blue-500/40 px-4 py-3 transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/50"
+              style={{ backgroundColor: CARD_BG }}
+            >
+              <SearchIcon className="shrink-0" style={{ color: BLUE_MEDICAL }} />
+              <input
+                id="historial-busqueda"
+                type="search"
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Buscar por nombre del paciente..."
+                className="min-w-0 flex-1 bg-transparent text-base text-white placeholder:text-slate-500 focus:outline-none"
+                autoComplete="off"
+              />
             </div>
+          </div>
+        )}
 
-            {/* Tabla */}
-            {loading ? (
-              <div className="flex items-center justify-center py-12 text-slate-500">
-                Cargando…
-              </div>
-            ) : error ? (
-              <div className="py-8 text-center text-sm text-red-600">{error}</div>
-            ) : paginados.length === 0 ? (
-              <div className="py-12 text-center text-slate-500">
-                No hay registros. Realice triajes desde la página principal.
-              </div>
-            ) : (
-              <>
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent border-slate-200">
-                      <TableHead className="text-slate-600">Fecha y Hora</TableHead>
-                      <TableHead className="text-slate-600">Nombre / ID</TableHead>
-                      <TableHead className="text-slate-600">Nivel</TableHead>
-                      <TableHead className="text-slate-600">Diagnóstico presuntivo</TableHead>
-                      <TableHead className="text-slate-600">Glasgow</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {paginados.map((r, idx) => {
-                      const color = COLOR_CIRCULO[r.nivel_gravedad];
-                      return (
-                        <TableRow
-                          key={`${r.paciente_id}-${r.fecha}-${idx}`}
-                          className="cursor-pointer border-slate-100 hover:bg-sky-50/60 transition-colors"
-                          onClick={() => setDetalle(r)}
-                        >
-                          <TableCell className="whitespace-nowrap text-slate-700">
-                            {new Date(r.fecha).toLocaleString("es", {
-                              dateStyle: "short",
-                              timeStyle: "short",
-                            })}
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-medium text-slate-800">
-                              {r.nombre_paciente ?? r.paciente_id}
-                            </span>
-                            {r.dni ? (
-                              <span className="ml-1 text-xs text-slate-500">DNI: {r.dni}</span>
-                            ) : null}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`h-3 w-3 shrink-0 rounded-full ${color.bg}`}
-                                aria-hidden
-                              />
-                              <span className={`text-sm font-medium ${color.text}`}>
-                                {r.nivel ?? ETIQUETAS_NIVEL[r.nivel_gravedad]} ({r.nivel_gravedad})
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="max-w-[220px] text-slate-700">
-                            {r.diagnostico_presuntivo
-                              ? truncar(r.diagnostico_presuntivo, 50)
-                              : "—"}
-                          </TableCell>
-                          <TableCell className="text-slate-700">
-                            {r.glasgow != null ? (
-                              <span className="font-mono font-medium">
-                                {r.glasgow.puntaje_glasgow}
-                                <span className="text-slate-400"> (E{r.glasgow.E} V{r.glasgow.V} M{r.glasgow.M})</span>
-                              </span>
-                            ) : (
-                              "—"
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+        {loading ? (
+          <div className="flex items-center justify-center py-16 text-slate-400">Cargando…</div>
+        ) : list.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div
+              className="mb-5 flex h-24 w-24 items-center justify-center rounded-2xl"
+              style={{ backgroundColor: CARD_BG }}
+              aria-hidden
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="48"
+                height="48"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-slate-500"
+              >
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                <line x1="12" y1="11" x2="12" y2="17" />
+                <line x1="9" y1="14" x2="15" y2="14" />
+              </svg>
+            </div>
+            <p className="text-xl font-medium text-slate-300">
+              No se registran intervenciones en la memoria local
+            </p>
+            <p className="mt-2 text-sm text-slate-500">
+              Los informes que generes desde la ficha clínica aparecerán aquí.
+            </p>
+          </div>
+        ) : filtrados.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <p className="text-lg font-medium text-slate-300">
+              No se encontraron reportes con ese nombre
+            </p>
+            <p className="mt-1 text-sm text-slate-500">
+              Prueba con otro término o borra el filtro.
+            </p>
+          </div>
+        ) : (
+          <ul className="space-y-4">
+            {filtrados.map((entry) => {
+              const date = new Date(entry.createdAt);
+              const hora = date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
+              const paciente = entry.nombrePaciente || entry.pacienteId || "Sin nombre";
+              const fileName = formatFileName(hora, paciente);
+              const isRcp = reportContainsRCP(entry);
+              const isBusy = actionLoadingId === entry.id;
 
-                {/* Paginación */}
-                {totalPaginas > 1 && (
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 pt-4">
-                    <p className="text-sm text-slate-600">
-                      Mostrando {pagina * PAGE_SIZE + 1}–{Math.min((pagina + 1) * PAGE_SIZE, filtrados.length)} de {filtrados.length}
-                    </p>
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={pagina === 0}
-                        onClick={() => setPagina((p) => Math.max(0, p - 1))}
+              return (
+                <li
+                  key={entry.id}
+                  className="overflow-hidden rounded-xl shadow-sm"
+                  style={{
+                    backgroundColor: CARD_BG,
+                    borderLeftWidth: "4px",
+                    borderLeftColor: isRcp ? RED_EMERGENCY : BLUE_MEDICAL,
+                  }}
+                >
+                  <div className="flex min-w-0 flex-1 flex-col p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-base font-bold text-white">
+                        {hora} — {paciente}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Unidad: {entry.unidadId || "—"} | Operador: {entry.operadorId || "—"}
+                      </p>
+                      <p
+                        className="mt-2 truncate rounded-lg px-2 py-1 font-mono text-xs text-slate-300"
+                        style={{ backgroundColor: "rgba(15, 23, 42, 0.6)" }}
+                        title={fileName}
                       >
-                        Anterior
-                      </Button>
-                      <Button
+                        {fileName}
+                      </p>
+                    </div>
+                    <div className="mt-3 flex items-center gap-2 sm:mt-0 sm:gap-2">
+                      <button
                         type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={pagina >= totalPaginas - 1}
-                        onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))}
+                        onClick={() => handleAbrir(entry)}
+                        disabled={isBusy}
+                        className="flex min-h-[48px] min-w-[48px] flex-col items-center justify-center rounded-xl transition hover:opacity-90 disabled:opacity-50"
+                        style={{ backgroundColor: BLUE_MEDICAL }}
+                        aria-label="Ver PDF"
                       >
-                        Siguiente
-                      </Button>
+                        <EyeIcon className="text-white" />
+                        <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
+                          Ver
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCompartir(entry)}
+                        disabled={isBusy}
+                        className="flex min-h-[48px] min-w-[48px] flex-col items-center justify-center rounded-xl bg-emerald-600 transition hover:bg-emerald-500 disabled:opacity-50"
+                        aria-label="Compartir PDF"
+                      >
+                        <ShareIcon className="text-white" />
+                        <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
+                          Compartir
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirmId(entry.id)}
+                        disabled={isBusy}
+                        className="flex min-h-[48px] min-w-[48px] flex-col items-center justify-center rounded-xl bg-red-600/90 transition hover:bg-red-600 disabled:opacity-50"
+                        aria-label="Eliminar del historial"
+                      >
+                        <TrashIcon className="text-white" />
+                        <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
+                          Eliminar
+                        </span>
+                      </button>
                     </div>
                   </div>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </main>
 
-      {/* Modal detalle */}
-      <Dialog open={!!detalle} onOpenChange={(open) => !open && setDetalle(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto max-w-2xl border-slate-200 bg-white">
+      {/* Botón VOLVER con degradado Rojo-Azul al final */}
+      <footer
+        className="mt-12 border-t px-4 py-8 text-center"
+        style={{ borderColor: "rgba(51, 65, 85, 0.6)" }}
+      >
+        <Link
+          href="/"
+          className="inline-flex min-h-[56px] min-w-[280px] items-center justify-center rounded-xl px-8 py-4 text-base font-bold text-white transition active:scale-[0.98]"
+          style={{
+            background: `linear-gradient(135deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)`,
+            boxShadow: "0 0 20px rgba(37, 99, 235, 0.4), 0 4px 12px rgba(0,0,0,0.3)",
+          }}
+        >
+          ← VOLVER AL INICIO
+        </Link>
+      </footer>
+
+      {/* Modal confirmación eliminar */}
+      <Dialog open={!!deleteConfirmId} onOpenChange={(open) => !open && setDeleteConfirmId(null)}>
+        <DialogContent
+          className="border-slate-700 text-slate-100"
+          style={{ backgroundColor: CARD_BG }}
+        >
           <DialogHeader>
-            <DialogTitle className="text-slate-800">Detalle del triaje</DialogTitle>
+            <DialogTitle className="text-slate-100">¿Eliminar este informe?</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Se quitará del historial local. El archivo no se borra del dispositivo si ya lo compartiste.
+            </DialogDescription>
           </DialogHeader>
-          {detalle ? (
-            <div className="space-y-4 text-sm">
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Paciente / ID</p>
-                <p className="mt-1 font-medium text-slate-800">
-                  {detalle.nombre_paciente ?? detalle.paciente_id}
-                  {detalle.dni ? ` — DNI: ${detalle.dni}` : ""}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Fecha y hora</p>
-                <p className="mt-1 text-slate-800">
-                  {new Date(detalle.fecha).toLocaleString("es", { dateStyle: "full", timeStyle: "short" })}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Nivel de gravedad</p>
-                <p className="mt-1 font-medium text-slate-800">
-                  {detalle.nivel ?? ETIQUETAS_NIVEL[detalle.nivel_gravedad]} (nivel {detalle.nivel_gravedad})
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Síntomas seleccionados</p>
-                <p className="mt-1 text-slate-800 whitespace-pre-wrap">{detalle.sintomas_texto}</p>
-              </div>
-              {detalle.glasgow != null && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-600">Escala de Glasgow</p>
-                  <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-                    <dt className="text-slate-500">Ocular (E)</dt>
-                    <dd className="font-medium text-slate-800">{detalle.glasgow.E}</dd>
-                    <dt className="text-slate-500">Verbal (V)</dt>
-                    <dd className="font-medium text-slate-800">{detalle.glasgow.V}</dd>
-                    <dt className="text-slate-500">Motor (M)</dt>
-                    <dd className="font-medium text-slate-800">{detalle.glasgow.M}</dd>
-                    <dt className="text-slate-500">Puntaje total</dt>
-                    <dd className="font-mono font-semibold text-slate-800">{detalle.glasgow.puntaje_glasgow}</dd>
-                  </dl>
-                </div>
-              )}
-              {detalle.diagnostico_presuntivo && (
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Diagnóstico presuntivo</p>
-                  <p className="mt-1 text-slate-800">{detalle.diagnostico_presuntivo}</p>
-                </div>
-              )}
-              {detalle.justificacion && (
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Justificación</p>
-                  <p className="mt-1 text-slate-800">{detalle.justificacion}</p>
-                </div>
-              )}
-              <div className="rounded-xl border border-sky-200 bg-sky-50/50 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-600">Recomendación completa</p>
-                <p className="mt-2 text-slate-800">{detalle.recomendacion}</p>
-                {Array.isArray(detalle.pasos_a_seguir) && detalle.pasos_a_seguir.length > 0 && (
-                  <ol className="mt-3 list-inside list-decimal space-y-1 text-slate-800">
-                    {detalle.pasos_a_seguir.map((paso, i) => (
-                      <li key={i}>{paso}</li>
-                    ))}
-                  </ol>
-                )}
-              </div>
-            </div>
-          ) : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <button
+              type="button"
+              onClick={() => setDeleteConfirmId(null)}
+              className="min-h-[44px] rounded-xl px-4 py-2.5 text-sm font-semibold text-white"
+              style={{ backgroundColor: BLUE_MEDICAL }}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => deleteConfirmId && handleEliminar(deleteConfirmId)}
+              className="min-h-[44px] rounded-xl border-2 px-4 py-2.5 text-sm font-semibold text-red-300"
+              style={{ borderColor: RED_EMERGENCY }}
+            >
+              Sí, eliminar
+            </button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -16,9 +16,15 @@ import type { SignosVitales } from "@/lib/types";
 import {
   loadFichaClinica,
   saveFichaClinica,
-  type FichaClinicaPersistida,
   type TimestampEvento,
 } from "@/lib/ficha-clinica-storage";
+import { generateAndSharePDF } from "@/lib/share-pdf";
+import type { ReportSummaryData } from "@/lib/report-summary";
+import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
+import { getOperadorId, getUnidadId } from "@/lib/operador-storage";
+import { syncIntervencionToFirebase } from "@/lib/firebase-intervenciones";
+import { hapticImpactMedium } from "@/lib/haptics";
+import { ToastTimestamp } from "@/components/toast-timestamp";
 
 export type EstadoXABCDE = "pendiente" | "ok" | "no-aplica";
 
@@ -85,9 +91,21 @@ export interface ChecklistXABCDEProps {
   isSubmitting?: boolean;
 }
 
-const CARD_DARK = "border-zinc-700 bg-zinc-800/80 text-zinc-100";
-const INPUT_DARK = "min-h-[44px] border-zinc-600 bg-zinc-800 text-zinc-100 placeholder:text-zinc-500 focus:ring-emerald-500";
-const LABEL_DARK = "text-zinc-300";
+const CARD_BG = "#1e293b";
+const BLUE_MEDICAL = "#2563eb";
+const RED_EMERGENCY = "#dc2626";
+
+const CARD_DARK = "rounded-xl border text-slate-100 shadow-sm";
+const CARD_DARK_STYLE = { backgroundColor: CARD_BG, borderColor: "rgba(37, 99, 235, 0.35)" };
+const INPUT_DARK =
+  "min-h-[44px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-[#0f172a]";
+const LABEL_DARK = "text-sm font-medium text-slate-300";
+const BTN_GRADIENT =
+  "min-h-[52px] touch-manipulation rounded-xl px-6 py-4 text-base font-semibold text-white transition active:scale-[0.98]";
+const BTN_GRADIENT_STYLE = {
+  background: `linear-gradient(135deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)`,
+  boxShadow: "0 0 20px rgba(37, 99, 235, 0.4), 0 4px 12px rgba(0,0,0,0.3)",
+};
 
 export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXABCDEProps): React.ReactElement {
   const [horaInicio, setHoraInicio] = React.useState<string>("");
@@ -116,8 +134,29 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
   const [glasgowM, setGlasgowM] = React.useState<number>(0);
   const [timestampEventos, setTimestampEventos] = React.useState<TimestampEvento[]>([]);
   const [timestampInput, setTimestampInput] = React.useState("");
+  const [currentStep, setCurrentStep] = React.useState(0);
+  const [pdfLoading, setPdfLoading] = React.useState(false);
+  const [toastMessage, setToastMessage] = React.useState<string | null>(null);
+  const [pulseButtonKey, setPulseButtonKey] = React.useState<string | null>(null);
+  const [lastAddedHora, setLastAddedHora] = React.useState<string | null>(null);
 
   const persistRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const TOTAL_STEPS = 12;
+  const STEP_LABELS: { letra?: string; titulo: string }[] = [
+    { titulo: "Inicio" },
+    { letra: "X", titulo: "eXanguinación" },
+    { letra: "A", titulo: "Vía aérea" },
+    { letra: "B", titulo: "Respiración" },
+    { letra: "C", titulo: "Circulación" },
+    { letra: "D", titulo: "Discapacidad" },
+    { letra: "E", titulo: "Exposición" },
+    { titulo: "Signos vitales" },
+    { titulo: "Glasgow" },
+    { titulo: "Timestamps" },
+    { titulo: "Paciente" },
+    { titulo: "Enviar" },
+  ];
 
   const persist = React.useCallback(() => {
     saveFichaClinica({
@@ -138,6 +177,7 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
       glasgowV,
       glasgowM,
       timestamp_eventos: timestampEventos,
+      currentStep,
     });
   }, [
     horaInicio,
@@ -157,6 +197,7 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
     glasgowV,
     glasgowM,
     timestampEventos,
+    currentStep,
   ]);
 
   React.useEffect(() => {
@@ -180,6 +221,7 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
     setGlasgowV(loaded.glasgowV ?? 0);
     setGlasgowM(loaded.glasgowM ?? 0);
     setTimestampEventos(loaded.timestamp_eventos || []);
+    setCurrentStep(Math.min(Math.max(0, loaded.currentStep ?? 0), TOTAL_STEPS - 1));
   }, []);
 
   React.useEffect(() => {
@@ -189,6 +231,52 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
       if (persistRef.current) clearTimeout(persistRef.current);
     };
   }, [persist]);
+
+  const hasRCP = React.useMemo(() => {
+    const hasRcpEvent = (timestampEventos ?? []).some((e) =>
+      String(e.evento).toUpperCase().includes("RCP")
+    );
+    const hasRcpText = (sintomasTexto ?? "").toUpperCase().includes("RCP");
+    return hasRcpEvent || hasRcpText;
+  }, [timestampEventos, sintomasTexto]);
+
+  const puntajeGlasgow = glasgowE + glasgowV + glasgowM;
+
+  React.useEffect(() => {
+    const t = setTimeout(() => {
+      const operadorId = getOperadorId() || "";
+      const unidadId = getUnidadId() || "";
+      if (!operadorId && !unidadId) return;
+      syncIntervencionToFirebase({
+        operadorId,
+        unidadId,
+        updatedAt: new Date().toISOString(),
+        currentStep,
+        paciente_id: pacienteId.trim() || undefined,
+        nombre_paciente: nombrePaciente.trim() || undefined,
+        dni: dni.trim() || undefined,
+        sintomas_texto: sintomasTexto.trim() || undefined,
+        xabcde: xabcde as Record<string, string>,
+        hora_inicio_atencion: horaInicio || undefined,
+        timestamp_eventos:
+          timestampEventos.length > 0 ? timestampEventos : undefined,
+        glasgow_score: puntajeGlasgow > 0 ? puntajeGlasgow : undefined,
+        hasRCP,
+      });
+    }, 500);
+    return () => clearTimeout(t);
+  }, [
+    currentStep,
+    pacienteId,
+    nombrePaciente,
+    dni,
+    sintomasTexto,
+    xabcde,
+    horaInicio,
+    timestampEventos,
+    puntajeGlasgow,
+    hasRCP,
+  ]);
 
   const registrarInicio = React.useCallback(() => {
     const now = new Date();
@@ -207,11 +295,26 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
     setXabcde((prev) => ({ ...prev, [letra]: cicloEstado(letra) }));
   };
 
-  const agregarTimestamp = (eventoLabel?: string) => {
-    const evento = eventoLabel ?? timestampInput.trim() || "Evento";
-    setTimestampEventos((prev) => [...prev, { evento, hora: formatHora(new Date()) }]);
+  const agregarTimestamp = React.useCallback((eventoLabel?: string) => {
+    const evento = eventoLabel ?? (timestampInput.trim() || "Evento");
+    const now = new Date();
+    const hora = formatHora(now);
+    const horaDisplay = now.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+    hapticImpactMedium();
+    setToastMessage(`Evento Registrado: ${evento} - ${horaDisplay}`);
+    setPulseButtonKey(eventoLabel ?? "_custom");
+    setLastAddedHora(hora);
+    setTimestampEventos((prev) => [...prev, { evento, hora }]);
     if (!eventoLabel) setTimestampInput("");
-  };
+
+    setTimeout(() => setPulseButtonKey(null), 400);
+  }, [timestampInput]);
+
+  /** Cuántas veces se ha registrado este evento (para badge). */
+  const countByEvento = React.useCallback((label: string) => {
+    return timestampEventos.filter((ev) => ev.evento === label).length;
+  }, [timestampEventos]);
 
   /** Botones rápidos de tiempos: etiqueta y clase de color (min 44px). */
   const BOTONES_TIMESTAMP = [
@@ -221,7 +324,6 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
     { label: "Llegada Hosp.", color: "bg-amber-500 hover:bg-amber-400 border-amber-400 text-zinc-900" },
   ] as const;
 
-  const puntajeGlasgow = glasgowE + glasgowV + glasgowM;
   const glasgowCompleto = glasgowE > 0 && glasgowV > 0 && glasgowM > 0;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -260,307 +362,325 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
     return "bg-amber-600 text-white border-amber-500";
   };
 
-  return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      <Card className={CARD_DARK}>
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg text-zinc-100">Hora de inicio de atención</CardTitle>
-          <div className="flex flex-wrap items-center gap-3">
-            <Input
-              readOnly
-              value={horaInicio || "—"}
-              className={`max-w-xs font-mono text-sm ${INPUT_DARK}`}
-              aria-label="Hora de inicio"
-            />
-            {!inicioRegistrado && (
-              <Button type="button" onClick={registrarInicio} size="lg" className="min-h-[44px] bg-emerald-600 hover:bg-emerald-700">
-                Iniciar atención
-              </Button>
-            )}
-            {inicioRegistrado && (
-              <span className="text-sm font-medium text-emerald-400">Registrada</span>
-            )}
-          </div>
-        </CardHeader>
-      </Card>
+  const progressPct = ((currentStep + 1) / TOTAL_STEPS) * 100;
+  const currentLabel = STEP_LABELS[currentStep];
+  const progressText = currentLabel.letra
+    ? `Progreso: ${currentLabel.letra} - ${currentLabel.titulo}`
+    : `Progreso: ${currentLabel.titulo}`;
+  const isGlasgowStepComplete = currentStep === 8 && glasgowCompleto;
+  const goNext = () => setCurrentStep((s) => Math.min(s + 1, TOTAL_STEPS - 1));
+  const goBack = () => setCurrentStep((s) => Math.max(s - 1, 0));
 
-      <Card className={CARD_DARK}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg text-zinc-100">Evaluación XABCDE</CardTitle>
-          <p className="text-sm text-zinc-400">Toque cada ítem: Pendiente → OK → No aplica (mín. 44px)</p>
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          {XABCDE_ITEMS.map(({ letra, titulo, descripcion }) => (
-            <button
-              key={letra}
-              type="button"
-              onClick={() => toggleXABCDE(letra)}
-              className={`flex min-h-[44px] touch-manipulation items-center justify-between rounded-xl border-2 px-4 py-3 text-left transition active:scale-[0.98] ${colorEstado(xabcde[letra] ?? "pendiente")}`}
-            >
-              <span className="text-xl font-bold">{letra}</span>
-              <div>
-                <p className="font-semibold">{titulo}</p>
-                <p className="text-xs opacity-90">{descripcion}</p>
+  const buildReportSummaryData = (): ReportSummaryData => {
+    const signos: SignosVitales = {};
+    if (pulse) signos.frecuenciaCardiaca = Number(pulse);
+    if (saturacionOxigeno) signos.saturacionOxigeno = Number(saturacionOxigeno);
+    if (bpSystolic && bpDiastolic) signos.tensionArterial = `${bpSystolic}/${bpDiastolic}`;
+    if (respirationRate) signos.frecuenciaRespiratoria = Number(respirationRate);
+    return {
+      hora_inicio_atencion: horaInicio || undefined,
+      paciente_id: pacienteId.trim() || undefined,
+      nombre_paciente: nombrePaciente.trim() || undefined,
+      dni: dni.trim() || undefined,
+      sintomas_texto: sintomasTexto.trim() || undefined,
+      xabcde: xabcde as Record<string, string>,
+      signos_vitales: Object.keys(signos).length > 0 ? signos : undefined,
+      glasgow: glasgowCompleto ? { E: glasgowE, V: glasgowV, M: glasgowM, puntaje_glasgow: puntajeGlasgow } : undefined,
+      glasgow_score: puntajeGlasgow > 0 ? puntajeGlasgow : undefined,
+      blood_loss: bloodLoss.trim() || undefined,
+      airway_status: airwayStatus.trim() || undefined,
+      respiration_rate: respirationRate ? Number(respirationRate) : undefined,
+      pulse: pulse ? Number(pulse) : undefined,
+      bp_systolic: bpSystolic ? Number(bpSystolic) : undefined,
+      bp_diastolic: bpDiastolic ? Number(bpDiastolic) : undefined,
+      timestamp_eventos: timestampEventos.length > 0 ? timestampEventos : undefined,
+    };
+  };
+
+  const handleGeneratePDF = async () => {
+    setPdfLoading(true);
+    const data = buildReportSummaryData();
+    try {
+      await generateAndSharePDF(data);
+      addToHistorialPdf(data, { operadorId: getOperadorId() || undefined, unidadId: getUnidadId() || undefined });
+    } catch (e) {
+      console.error("Error al generar/compartir PDF:", e);
+      alert("No se pudo generar o compartir el PDF. Compruebe los permisos o use la descarga.");
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 0:
+        return (
+          <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
+            <CardHeader className="pb-4">
+              <CardTitle className="text-lg text-slate-100">Hora de inicio de atención</CardTitle>
+              <div className="flex flex-wrap items-center gap-3">
+                <Input readOnly value={horaInicio || "—"} className={`max-w-xs font-mono text-sm ${INPUT_DARK}`} aria-label="Hora de inicio" />
+                {!inicioRegistrado ? (
+                  <Button type="button" onClick={registrarInicio} size="lg" className={BTN_GRADIENT} style={BTN_GRADIENT_STYLE}>
+                    Iniciar atención
+                  </Button>
+                ) : (
+                  <span className="text-sm font-medium text-blue-400">Registrada</span>
+                )}
               </div>
-            </button>
-          ))}
-        </CardContent>
-      </Card>
-
-      <Card className={CARD_DARK}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg text-zinc-100">Signos vitales y datos clínicos</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <Label htmlFor="blood_loss" className={LABEL_DARK}>Pérdida de sangre (blood_loss)</Label>
-            <Input
-              id="blood_loss"
-              value={bloodLoss}
-              onChange={(e) => setBloodLoss(e.target.value)}
-              placeholder="ej. Ninguna / Moderada"
-              className={INPUT_DARK}
-            />
-          </div>
-          <div>
-            <Label htmlFor="airway" className={LABEL_DARK}>Estado vía aérea (airway_status)</Label>
-            <Input
-              id="airway"
-              value={airwayStatus}
-              onChange={(e) => setAirwayStatus(e.target.value)}
-              placeholder="ej. Permeable"
-              className={INPUT_DARK}
-            />
-          </div>
-          <div>
-            <Label htmlFor="respiration_rate" className={LABEL_DARK}>Frec. respiratoria (rpm)</Label>
-            <Input
-              id="respiration_rate"
-              type="number"
-              min={0}
-              max={60}
-              placeholder="ej. 16"
-              value={respirationRate}
-              onChange={(e) => setRespirationRate(e.target.value)}
-              className={INPUT_DARK}
-            />
-          </div>
-          <div>
-            <Label htmlFor="pulse" className={LABEL_DARK}>Pulso (lpm)</Label>
-            <Input
-              id="pulse"
-              type="number"
-              min={0}
-              max={300}
-              placeholder="ej. 72"
-              value={pulse}
-              onChange={(e) => setPulse(e.target.value)}
-              className={INPUT_DARK}
-            />
-          </div>
-          <div>
-            <Label htmlFor="bp_sys" className={LABEL_DARK}>TA sistólica (mmHg)</Label>
-            <Input
-              id="bp_sys"
-              type="number"
-              min={0}
-              max={300}
-              placeholder="120"
-              value={bpSystolic}
-              onChange={(e) => setBpSystolic(e.target.value)}
-              className={INPUT_DARK}
-            />
-          </div>
-          <div>
-            <Label htmlFor="bp_dia" className={LABEL_DARK}>TA diastólica (mmHg)</Label>
-            <Input
-              id="bp_dia"
-              type="number"
-              min={0}
-              max={200}
-              placeholder="80"
-              value={bpDiastolic}
-              onChange={(e) => setBpDiastolic(e.target.value)}
-              className={INPUT_DARK}
-            />
-          </div>
-          <div>
-            <Label htmlFor="spo2" className={LABEL_DARK}>Saturación O₂ (%)</Label>
-            <Input
-              id="spo2"
-              type="number"
-              min={0}
-              max={100}
-              placeholder="98"
-              value={saturacionOxigeno}
-              onChange={(e) => setSaturacionOxigeno(e.target.value)}
-              className={INPUT_DARK}
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className={CARD_DARK}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg text-zinc-100">Escala de Glasgow (simplificada)</CardTitle>
-          <p className="text-sm text-zinc-400">Seleccione Ocular, Verbal y Motor — el puntaje se calcula solo</p>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-3">
-          <div>
-            <Label className={LABEL_DARK}>Ocular (E)</Label>
-            <Select value={glasgowE ? String(glasgowE) : "0"} onValueChange={(v) => setGlasgowE(Number(v))}>
-              <SelectTrigger className={`mt-1 ${INPUT_DARK} min-h-[44px] [&>span]:text-zinc-100`}>
-                <SelectValue placeholder="—" />
-              </SelectTrigger>
-              <SelectContent className="border-zinc-600 bg-zinc-800 text-zinc-100">
-                {GLASGOW_OCULAR.map((o) => (
-                  <SelectItem key={o.value} value={String(o.value)} className="focus:bg-zinc-700 focus:text-zinc-100">
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className={LABEL_DARK}>Verbal (V)</Label>
-            <Select value={glasgowV ? String(glasgowV) : "0"} onValueChange={(v) => setGlasgowV(Number(v))}>
-              <SelectTrigger className={`mt-1 ${INPUT_DARK} min-h-[44px] [&>span]:text-zinc-100`}>
-                <SelectValue placeholder="—" />
-              </SelectTrigger>
-              <SelectContent className="border-zinc-600 bg-zinc-800 text-zinc-100">
-                {GLASGOW_VERBAL.map((o) => (
-                  <SelectItem key={o.value} value={String(o.value)} className="focus:bg-zinc-700 focus:text-zinc-100">
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label className={LABEL_DARK}>Motor (M)</Label>
-            <Select value={glasgowM ? String(glasgowM) : "0"} onValueChange={(v) => setGlasgowM(Number(v))}>
-              <SelectTrigger className={`mt-1 ${INPUT_DARK} min-h-[44px] [&>span]:text-zinc-100`}>
-                <SelectValue placeholder="—" />
-              </SelectTrigger>
-              <SelectContent className="border-zinc-600 bg-zinc-800 text-zinc-100">
-                {GLASGOW_MOTOR.map((o) => (
-                  <SelectItem key={o.value} value={String(o.value)} className="focus:bg-zinc-700 focus:text-zinc-100">
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <p className="sm:col-span-3 text-zinc-300 font-medium">Puntaje Glasgow total: {puntajeGlasgow}</p>
-        </CardContent>
-      </Card>
-
-      <Card className={CARD_DARK}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg text-zinc-100">Módulo de Tiempos (Timestamps)</CardTitle>
-          <p className="text-sm text-zinc-400">Toque un botón para registrar la hora exacta. Se guarda en este dispositivo.</p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-            {BOTONES_TIMESTAMP.map((b) => (
+            </CardHeader>
+          </Card>
+        );
+      case 1:
+      case 2:
+      case 3:
+      case 4:
+      case 5:
+      case 6: {
+        const idx = currentStep - 1;
+        const item = XABCDE_ITEMS[idx];
+        return (
+          <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg text-slate-100">{item.letra} — {item.titulo}</CardTitle>
+              <p className="text-sm text-slate-400">{item.descripcion}. Toque para: Pendiente → OK → No aplica</p>
+            </CardHeader>
+            <CardContent>
               <button
-                key={b.label}
                 type="button"
-                onClick={() => agregarTimestamp(b.label)}
-                className={`min-h-[44px] touch-manipulation rounded-xl border-2 px-3 py-2 text-sm font-medium transition active:scale-[0.98] ${b.color}`}
+                onClick={() => toggleXABCDE(item.letra)}
+                className={`flex min-h-[56px] w-full touch-manipulation items-center justify-between rounded-xl border-2 px-4 py-3 text-left transition active:scale-[0.98] ${colorEstado(xabcde[item.letra] ?? "pendiente")}`}
               >
-                {b.label}
+                <span className="text-2xl font-bold">{item.letra}</span>
+                <div className="text-right">
+                  <p className="font-semibold">{item.titulo}</p>
+                  <p className="text-xs opacity-90">{item.descripcion}</p>
+                </div>
               </button>
-            ))}
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            <Input
-              value={timestampInput}
-              onChange={(e) => setTimestampInput(e.target.value)}
-              placeholder="Otro evento (opcional)"
-              className={`flex-1 min-w-[140px] ${INPUT_DARK}`}
-            />
-            <Button
-              type="button"
-              onClick={() => agregarTimestamp()}
-              className="min-h-[44px] bg-zinc-600 hover:bg-zinc-500 text-zinc-100"
-            >
-              Registrar hora
-            </Button>
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">Historial de Tiempos</p>
-            {timestampEventos.length === 0 ? (
-              <p className="rounded-lg bg-zinc-700/40 px-3 py-2 text-sm text-zinc-500">Sin eventos registrados</p>
-            ) : (
-              <ul className="space-y-1.5 text-sm">
-                {timestampEventos.map((ev, i) => (
-                  <li key={i} className="flex items-center gap-2 rounded-lg bg-zinc-700/50 px-3 py-2 text-zinc-200">
-                    <span className="font-mono text-zinc-400">{new Date(ev.hora).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</span>
-                    <span className="text-zinc-300">—</span>
-                    <span>{ev.evento}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        );
+      }
+      case 7:
+        return (
+          <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg text-slate-100">Signos vitales y datos clínicos</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div><Label className={LABEL_DARK}>Pérdida de sangre</Label><Input value={bloodLoss} onChange={(e) => setBloodLoss(e.target.value)} placeholder="ej. Ninguna" className={INPUT_DARK} /></div>
+              <div><Label className={LABEL_DARK}>Estado vía aérea</Label><Input value={airwayStatus} onChange={(e) => setAirwayStatus(e.target.value)} placeholder="ej. Permeable" className={INPUT_DARK} /></div>
+              <div><Label className={LABEL_DARK}>Frec. respiratoria (rpm)</Label><Input type="number" min={0} max={60} value={respirationRate} onChange={(e) => setRespirationRate(e.target.value)} placeholder="16" className={INPUT_DARK} /></div>
+              <div><Label className={LABEL_DARK}>Pulso (lpm)</Label><Input type="number" min={0} max={300} value={pulse} onChange={(e) => setPulse(e.target.value)} placeholder="72" className={INPUT_DARK} /></div>
+              <div><Label className={LABEL_DARK}>TA sistólica</Label><Input type="number" value={bpSystolic} onChange={(e) => setBpSystolic(e.target.value)} placeholder="120" className={INPUT_DARK} /></div>
+              <div><Label className={LABEL_DARK}>TA diastólica</Label><Input type="number" value={bpDiastolic} onChange={(e) => setBpDiastolic(e.target.value)} placeholder="80" className={INPUT_DARK} /></div>
+              <div className="sm:col-span-2"><Label className={LABEL_DARK}>Saturación O₂ (%)</Label><Input type="number" min={0} max={100} value={saturacionOxigeno} onChange={(e) => setSaturacionOxigeno(e.target.value)} placeholder="98" className={INPUT_DARK} /></div>
+            </CardContent>
+          </Card>
+        );
+      case 8:
+        return (
+          <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg text-slate-100">Escala de Glasgow</CardTitle>
+              <p className="text-sm text-slate-400">Ocular, Verbal y Motor — puntaje automático</p>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-3">
+              <div><Label className={LABEL_DARK}>Ocular (E)</Label><Select value={glasgowE ? String(glasgowE) : "0"} onValueChange={(v) => setGlasgowE(Number(v))}><SelectTrigger className={`mt-1 ${INPUT_DARK} min-h-[44px] [&>span]:text-slate-100`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_OCULAR.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100">{o.label}</SelectItem>)}</SelectContent></Select></div>
+              <div><Label className={LABEL_DARK}>Verbal (V)</Label><Select value={glasgowV ? String(glasgowV) : "0"} onValueChange={(v) => setGlasgowV(Number(v))}><SelectTrigger className={`mt-1 ${INPUT_DARK} min-h-[44px] [&>span]:text-slate-100`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_VERBAL.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100">{o.label}</SelectItem>)}</SelectContent></Select></div>
+              <div><Label className={LABEL_DARK}>Motor (M)</Label><Select value={glasgowM ? String(glasgowM) : "0"} onValueChange={(v) => setGlasgowM(Number(v))}><SelectTrigger className={`mt-1 ${INPUT_DARK} min-h-[44px] [&>span]:text-slate-100`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_MOTOR.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100">{o.label}</SelectItem>)}</SelectContent></Select></div>
+              <p className="sm:col-span-3 text-slate-300 font-medium">Puntaje Glasgow total: {puntajeGlasgow}</p>
+            </CardContent>
+          </Card>
+        );
+      case 9:
+        return (
+          <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg text-slate-100">Módulo de Tiempos</CardTitle>
+              <p className="text-sm text-slate-400">Registre la hora exacta de cada evento.</p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                {BOTONES_TIMESTAMP.map((b) => {
+                  const count = countByEvento(b.label);
+                  const isPulsing = pulseButtonKey === b.label;
+                  return (
+                    <div key={b.label} className="relative inline-block">
+                      {count > 0 && (
+                        <span
+                          className="absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-blue-500 px-1.5 text-xs font-bold text-white"
+                          aria-label={`${count} vez/veces registrado`}
+                        >
+                          {count}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => agregarTimestamp(b.label)}
+                        className={`relative min-h-[44px] touch-manipulation rounded-xl border-2 px-3 py-2 text-sm font-medium transition active:scale-[0.98] ${b.color} ${isPulsing ? "animate-button-flash" : ""}`}
+                      >
+                        {b.label}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <Input value={timestampInput} onChange={(e) => setTimestampInput(e.target.value)} placeholder="Otro evento" className={`flex-1 min-w-[140px] ${INPUT_DARK}`} />
+                <Button
+                  type="button"
+                  onClick={() => agregarTimestamp()}
+                  className={`min-h-[44px] rounded-xl border-2 border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700 focus:ring-blue-500 ${pulseButtonKey === "_custom" ? "animate-button-flash" : ""}`}
+                >
+                  Registrar hora
+                </Button>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Historial de Tiempos</p>
+                {timestampEventos.length === 0 ? <p className="rounded-lg bg-slate-800/60 px-3 py-2 text-sm text-slate-500">Sin eventos</p> : (
+                  <ul className="space-y-1.5 text-sm">
+                    {timestampEventos.map((ev, i) => (
+                      <li
+                        key={`${ev.hora}-${i}`}
+                        className={`flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2 text-slate-200 ${ev.hora === lastAddedHora ? "animate-timestamp-in" : ""}`}
+                      >
+                        <span className="font-mono text-slate-400">{new Date(ev.hora).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</span>
+                        <span className="text-slate-400">—</span><span>{ev.evento}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      case 10:
+        return (
+          <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg text-slate-100">Paciente</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-4 sm:grid-cols-2">
+              <div><Label htmlFor="paciente_id" className={LABEL_DARK}>ID / Nº historia</Label><Input id="paciente_id" value={pacienteId} onChange={(e) => setPacienteId(e.target.value)} placeholder="Obligatorio" className={INPUT_DARK} /></div>
+              <div><Label htmlFor="nombre_paciente" className={LABEL_DARK}>Nombre</Label><Input id="nombre_paciente" value={nombrePaciente} onChange={(e) => setNombrePaciente(e.target.value)} className={INPUT_DARK} /></div>
+              <div><Label htmlFor="dni" className={LABEL_DARK}>DNI</Label><Input id="dni" value={dni} onChange={(e) => setDni(e.target.value)} className={INPUT_DARK} /></div>
+              <div className="sm:col-span-2"><Label htmlFor="sintomas" className={LABEL_DARK}>Observaciones / Motivo</Label><Input id="sintomas" value={sintomasTexto} onChange={(e) => setSintomasTexto(e.target.value)} placeholder="Motivo de atención" className={INPUT_DARK} /></div>
+            </CardContent>
+          </Card>
+        );
+      case 11: {
+        const faltantes: string[] = [];
+        if (!horaInicio?.trim()) faltantes.push("Hora de inicio de atención");
+        if (!pacienteId?.trim()) faltantes.push("ID / Nº historia del paciente");
+        if (!nombrePaciente?.trim() && !dni?.trim()) faltantes.push("Nombre o DNI del paciente");
+        const tieneTA = (bpSystolic?.trim() && bpDiastolic?.trim()) || (Number(bpSystolic) > 0 && Number(bpDiastolic) > 0);
+        if (!tieneTA) faltantes.push("Tensión arterial");
+        return (
+          <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg text-slate-100">Enviar reporte</CardTitle>
+              <p className="text-sm text-slate-400">Revise los datos y envíe a central.</p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-slate-300 text-sm">Paciente: {pacienteId || "—"} · Inicio: {horaInicio ? new Date(horaInicio).toLocaleTimeString("es-ES") : "—"}</p>
+              {faltantes.length > 0 && (
+                <div className="rounded-lg border border-amber-500/70 bg-amber-500/15 px-3 py-2 text-sm text-amber-200">
+                  <p className="font-medium text-amber-100">Faltan datos críticos (recomendado rellenar antes de enviar):</p>
+                  <ul className="mt-1 list-inside list-disc text-amber-200/90">
+                    {faltantes.map((f, i) => (
+                      <li key={i}>{f}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <Button
+                type="button"
+                onClick={handleGeneratePDF}
+                disabled={pdfLoading}
+                className={`mt-4 w-full ${BTN_GRADIENT} disabled:opacity-70`}
+                style={BTN_GRADIENT_STYLE}
+              >
+                {pdfLoading ? "Generando…" : "GENERAR Y COMPARTIR PDF"}
+              </Button>
+            </CardContent>
+          </Card>
+        );
+      }
+      default:
+        return null;
+    }
+  };
 
-      <Card className={CARD_DARK}>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg text-zinc-100">Paciente</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <Label htmlFor="paciente_id" className={LABEL_DARK}>ID / Nº historia</Label>
-            <Input
-              id="paciente_id"
-              value={pacienteId}
-              onChange={(e) => setPacienteId(e.target.value)}
-              placeholder="Obligatorio"
-              className={INPUT_DARK}
-            />
-          </div>
-          <div>
-            <Label htmlFor="nombre_paciente" className={LABEL_DARK}>Nombre</Label>
-            <Input
-              id="nombre_paciente"
-              value={nombrePaciente}
-              onChange={(e) => setNombrePaciente(e.target.value)}
-              className={INPUT_DARK}
-            />
-          </div>
-          <div>
-            <Label htmlFor="dni" className={LABEL_DARK}>DNI</Label>
-            <Input
-              id="dni"
-              value={dni}
-              onChange={(e) => setDni(e.target.value)}
-              className={INPUT_DARK}
-            />
-          </div>
-          <div className="sm:col-span-2">
-            <Label htmlFor="sintomas" className={LABEL_DARK}>Observaciones / Motivo</Label>
-            <Input
-              id="sintomas"
-              value={sintomasTexto}
-              onChange={(e) => setSintomasTexto(e.target.value)}
-              placeholder="Breve descripción del motivo de atención"
-              className={INPUT_DARK}
-            />
-          </div>
-        </CardContent>
-      </Card>
+  const rcpCount = countByEvento("Registro RCP");
+  const fabPulsing = pulseButtonKey === "Registro RCP";
 
-      <Button
-        type="submit"
-        size="lg"
-        className="w-full min-h-[44px] text-base bg-emerald-600 hover:bg-emerald-700"
-        disabled={isSubmitting}
-      >
-        {isSubmitting ? "Enviando…" : "Enviar a Vercel"}
-      </Button>
+  return (
+    <form onSubmit={handleSubmit} className="relative flex min-h-[70vh] flex-col">
+      <ToastTimestamp message={toastMessage} onDismiss={() => setToastMessage(null)} />
+
+      {/* FAB: Registro RCP — timestamp sin salir de la pantalla */}
+      <div className="fixed bottom-24 right-4 z-50 flex flex-col items-center">
+        {rcpCount > 0 && (
+          <span
+            className="absolute -right-1 -top-1 z-10 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-blue-500 px-1.5 text-xs font-bold text-white"
+            aria-label={`RCP registrado ${rcpCount} vez/veces`}
+          >
+            {rcpCount}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => agregarTimestamp("Registro RCP")}
+          className={`relative flex min-h-[52px] min-w-[52px] touch-manipulation items-center justify-center rounded-full bg-red-600 px-4 py-3 text-xs font-bold uppercase text-white shadow-lg transition active:scale-95 hover:bg-red-500 ${fabPulsing ? "animate-button-flash" : ""}`}
+          aria-label="Registrar evento RCP con hora actual"
+        >
+          Registro RCP
+        </button>
+      </div>
+
+      {/* Barra de progreso */}
+      <div className="mb-4 shrink-0">
+        <p className="mb-1 text-xs font-medium text-slate-400">{progressText}</p>
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+          <div className="h-full rounded-full transition-all duration-300" style={{ width: `${progressPct}%`, background: `linear-gradient(90deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)` }} />
+        </div>
+      </div>
+
+      {/* Contenido del paso actual */}
+      <div className="min-h-0 flex-1 overflow-auto pb-4">{renderStepContent()}</div>
+
+      {/* Navegación táctica: botones con degradado rojo-azul */}
+      <div className="mt-auto flex shrink-0 gap-3 border-t pt-4" style={{ borderColor: "rgba(37, 99, 235, 0.25)" }}>
+        <Button
+          type="button"
+          onClick={goBack}
+          disabled={currentStep === 0}
+          className="min-h-[52px] flex-1 touch-manipulation rounded-xl border-2 text-base font-semibold text-slate-100 transition active:scale-[0.98] disabled:opacity-40"
+          style={{ borderColor: "rgba(37, 99, 235, 0.5)", backgroundColor: CARD_BG }}
+        >
+          ANTERIOR
+        </Button>
+        {currentStep < TOTAL_STEPS - 1 ? (
+          <Button
+            type="button"
+            onClick={goNext}
+            className={`flex-1 rounded-xl text-white ${BTN_GRADIENT} ${isGlasgowStepComplete ? "opacity-95" : ""}`}
+            style={BTN_GRADIENT_STYLE}
+          >
+            SIGUIENTE
+          </Button>
+        ) : (
+          <Button
+            type="submit"
+            className={`flex-1 rounded-xl text-white ${BTN_GRADIENT}`}
+            style={BTN_GRADIENT_STYLE}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? "Enviando…" : "Enviar a central"}
+          </Button>
+        )}
+      </div>
     </form>
   );
 }

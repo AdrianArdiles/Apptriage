@@ -9,6 +9,7 @@ out
 build
 dist
 app/api/triage/route.backup.ts
+app/_api_hidden_export
 
 # Debug
 npm-debug.log*

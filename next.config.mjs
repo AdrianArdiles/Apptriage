@@ -1,9 +1,7 @@
-/** Con IS_CAPACITOR=true (build para Android) se usa output: 'export' y se genera la carpeta 'out' que Capacitor copia con npx cap copy. En Vercel no se define IS_CAPACITOR, así las API Routes funcionan. */
-const isCapacitor = process.env.IS_CAPACITOR === "true";
-
+/** Export estático: npm run build genera la carpeta /out para Capacitor (webDir: 'out'). */
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  ...(isCapacitor ? { output: "export" } : {}),
+  output: "export",
   trailingSlash: false,
   images: { unoptimized: true },
 };

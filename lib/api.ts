@@ -70,6 +70,7 @@ function cleanData(datos: PayloadTriage): Record<string, unknown> {
 
 /**
  * Envía solo el objeto data del formulario a la API en Vercel. Sin payload de prueba ni test: true.
+ * En caso de error de red (sin conexión), devuelve { status: 0, data: {} } para que la cola pueda reintentar.
  */
 async function enviarTriage(data: Record<string, unknown>): Promise<{ status: number; data: unknown }> {
   const url = `${TRIAGE_API_URL}?t=${Date.now()}`;
@@ -79,46 +80,67 @@ async function enviarTriage(data: Record<string, unknown>): Promise<{ status: nu
     Accept: "application/json",
   };
 
-  if (Capacitor.isNativePlatform()) {
-    const response = await CapacitorHttp.request({
-      method: "POST",
-      url,
-      headers,
-      data,
-    });
-    return { status: response.status, data: response.data ?? {} };
-  }
+  try {
+    if (Capacitor.isNativePlatform()) {
+      const response = await CapacitorHttp.request({
+        method: "POST",
+        url,
+        headers,
+        data,
+      });
+      return { status: response.status, data: response.data ?? {} };
+    }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(data),
-  });
-  const resData = await response.json().catch(() => ({}));
-  return { status: response.status, data: resData };
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(data),
+    });
+    const resData = await response.json().catch(() => ({}));
+    return { status: response.status, data: resData };
+  } catch {
+    return { status: 0, data: {} };
+  }
+}
+
+/**
+ * Envía un payload a la API. Usado por la página y por la cola de reportes.
+ * Si no hay conexión devuelve { status: 0 }. No muestra alertas.
+ */
+export async function sendTriagePayload(datos: PayloadTriage): Promise<{ status: number; data: unknown }> {
+  const data = cleanData(datos);
+  if (!String(data.paciente_id ?? "").trim() || !String(data.sintomas_texto ?? "").trim()) {
+    throw new Error("Faltan paciente_id o sintomas_texto en los datos del formulario.");
+  }
+  return enviarTriage(data);
 }
 
 /**
  * POST a la API de triaje. Envía únicamente el objeto data que viene del formulario (sin test ni hardcode).
+ * Si no hay conexión (status 0), lanza error con mensaje SIN_CONEXION para que la página encole el reporte.
  */
 export async function postTriage(datos: PayloadTriage): Promise<{
   status: number;
   data: unknown;
 }> {
   try {
-    const data = cleanData(datos);
-    if (!String(data.paciente_id ?? "").trim() || !String(data.sintomas_texto ?? "").trim()) {
-      throw new Error("Faltan paciente_id o sintomas_texto en los datos del formulario.");
+    const result = await sendTriagePayload(datos);
+    if (result.status === 0) {
+      const err = new Error("SIN_CONEXION") as Error & { code?: string };
+      err.code = "SIN_CONEXION";
+      throw err;
     }
-    return enviarTriage(data);
+    if (result.status >= 200 && result.status < 300) return result;
+    const errMsg =
+      typeof result.data === "object" && result.data !== null && "error" in result.data
+        ? String((result.data as { error: unknown }).error)
+        : `Error ${result.status}`;
+    alert(`Error del servidor: ${errMsg}`);
+    return result;
   } catch (error) {
+    if (error instanceof Error && error.message === "SIN_CONEXION") throw error;
     const e = error instanceof Error ? error : new Error(String(error));
-    const mensaje = e.message || "Error desconocido";
-    const detalle =
-      e.stack ||
-      (typeof error === "object" ? JSON.stringify(error, null, 2) : String(error));
-    alert(`Error técnico: ${mensaje}`);
-    alert(`Objeto completo:\n${detalle}`);
+    alert(`Error técnico: ${e.message}`);
     throw error;
   }
 }
