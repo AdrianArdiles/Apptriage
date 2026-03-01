@@ -1,11 +1,11 @@
-import type { CapacitorConfig } from '@capacitor/cli';
+import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-  appId: 'com.adrian.triaje',
-  appName: 'TriajeMedico',
-  webDir: 'out',
+  appId: "com.adrian.triaje",
+  appName: "TriajeMedico",
+  webDir: "out",
   server: {
-    androidScheme: 'https',
+    androidScheme: "http",
     cleartext: true,
   },
   plugins: {

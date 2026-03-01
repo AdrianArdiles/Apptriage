@@ -35,8 +35,10 @@ export default function TriagePage(): React.ReactElement {
         const registro = parsed as RegistroTriage;
         setRespuestaPendienteConfirmacion(registro);
         setModalConfirmacionOpen(true);
-      } catch {
-        setError("No se pudo conectar con el servidor. Intente de nuevo.");
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message : "No se pudo conectar con el servidor. Intente de nuevo.";
+        setError(message);
       } finally {
         setIsSubmitting(false);
       }
