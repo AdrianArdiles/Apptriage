@@ -1,13 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <!-- Confianza por defecto: certificados del sistema y usuario (HTTPS a Vercel, etc.) -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
         </trust-anchors>
     </base-config>
+    <!-- Dominios explícitos: API en Vercel y localhost para desarrollo/Capacitor -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">apptriage.vercel.app</domain>
         <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
     </domain-config>
 </network-security-config>

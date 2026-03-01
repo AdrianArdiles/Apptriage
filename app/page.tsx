@@ -7,7 +7,7 @@ import { TriageResult } from "@/components/triage-result";
 import { ModalConfirmacionIngreso } from "@/components/modal-confirmacion-ingreso";
 import { SpinnerMedico } from "@/components/spinner-medico";
 import type { FormularioEntrada } from "@/components/triage-form";
-import { apiUrl } from "@/lib/api";
+import { postTriage } from "@/lib/api";
 import type { RegistroTriage } from "@/lib/types";
 
 export default function TriagePage(): React.ReactElement {
@@ -26,17 +26,13 @@ export default function TriagePage(): React.ReactElement {
       setRespuestaPendienteConfirmacion(null);
       setModalConfirmacionOpen(false);
       try {
-        const res = await fetch(apiUrl("/api/triage"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        });
-        const json = (await res.json()) as RegistroTriage | { error?: string };
-        if (!res.ok) {
-          setError("error" in json ? json.error ?? "Error en el servidor" : "Error en el servidor");
+        const { status, data: json } = await postTriage(data as Record<string, unknown>);
+        const parsed = json as RegistroTriage | { error?: string };
+        if (status < 200 || status >= 300) {
+          setError("error" in parsed ? parsed.error ?? "Error en el servidor" : "Error en el servidor");
           return;
         }
-        const registro = json as RegistroTriage;
+        const registro = parsed as RegistroTriage;
         setRespuestaPendienteConfirmacion(registro);
         setModalConfirmacionOpen(true);
       } catch {
