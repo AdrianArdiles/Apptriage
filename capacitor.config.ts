@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: "TriajeMedico",
   webDir: "out",
   server: {
-    androidScheme: "http",
+    androidScheme: "https",
     cleartext: true,
   },
   plugins: {

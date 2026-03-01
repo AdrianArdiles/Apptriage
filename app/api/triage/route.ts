@@ -11,9 +11,12 @@ import { CORS_HEADERS } from "@/lib/cors";
 /** Necesario para permitir build con output: 'export' (app Capacitor). En producción móvil usar backend desplegado. */
 export const dynamic = "force-static";
 
-/** Respuesta a preflight CORS (OPTIONS) desde Capacitor/localhost. */
-export function OPTIONS(): NextResponse {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+/** Preflight CORS: permite cualquier origen y métodos POST, OPTIONS desde móviles. */
+export async function OPTIONS(): Promise<NextResponse> {
+  return new NextResponse(null, {
+    status: 204,
+    headers: CORS_HEADERS,
+  });
 }
 
 /**
@@ -27,6 +30,7 @@ export function OPTIONS(): NextResponse {
  * - dni?: string (opcional)
  *
  * Clasifica con IA, guarda en base de datos (Consultas) y en memoria (mock), devuelve el registro.
+ * Todas las respuestas incluyen Access-Control-Allow-Origin: * (CORS permisivo para móviles).
  */
 export async function POST(request: Request): Promise<NextResponse> {
   try {
