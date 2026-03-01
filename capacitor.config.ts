@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'TriajeMedico',
   webDir: 'out',
   server: {
-    androidScheme: 'https', // Esto es vital para que Android acepte la conexión
+    androidScheme: 'http', // Esto es vital para que Android acepte la conexión
     cleartext: true         // Permite conexiones de prueba si algo falla
   }
 };
