@@ -8,6 +8,7 @@ node_modules
 out
 build
 dist
+app/api/triage/route.backup.ts
 
 # Debug
 npm-debug.log*

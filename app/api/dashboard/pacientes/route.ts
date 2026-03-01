@@ -3,7 +3,7 @@ import { obtenerTodosTriajes } from "@/lib/mock-db";
 import type { RegistroTriage } from "@/lib/types";
 import { CORS_HEADERS } from "@/lib/cors";
 
-/** Necesario para permitir build con output: 'export' (app Capacitor). En producción móvil usar backend desplegado. */
+/** force-static permite output: 'export' (Capacitor). En móvil se usa el backend desplegado en Vercel. */
 export const dynamic = "force-static";
 
 /** Respuesta a preflight CORS (OPTIONS) desde Capacitor/localhost. */

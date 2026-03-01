@@ -53,11 +53,11 @@ function cleanData(datos: PayloadTriage): Record<string, unknown> {
 }
 
 /**
- * Función de envío limpia: recibe el objeto de datos, URL con cache-buster, body estrictamente JSON.stringify(data).
+ * Envía solo el objeto data del formulario a la API en Vercel. Sin payload de prueba ni test: true.
  */
 async function enviarTriage(data: Record<string, unknown>): Promise<{ status: number; data: unknown }> {
-  const url = `https://apptriage.vercel.app/api/triage?t=${Date.now()}`;
-  console.log("Enviando datos reales desde el dispositivo:", data);
+  const url = `${TRIAGE_API_URL}?t=${Date.now()}`;
+  console.log("Datos a enviar:", data);
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json",
@@ -83,7 +83,7 @@ async function enviarTriage(data: Record<string, unknown>): Promise<{ status: nu
 }
 
 /**
- * POST a la API de triaje. Solo envía datos reales del formulario (nunca payload de prueba).
+ * POST a la API de triaje. Envía únicamente el objeto data que viene del formulario (sin test ni hardcode).
  */
 export async function postTriage(datos: PayloadTriage): Promise<{
   status: number;

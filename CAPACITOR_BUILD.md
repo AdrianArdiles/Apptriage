@@ -1,5 +1,8 @@
 # Build APK Android (sin caché antigua)
 
+- **next.config.mjs**: `output: 'export'` solo se activa con `IS_CAPACITOR=true`. Incluye `images: { unoptimized: true }` para export estático. En Vercel no se define esa variable, así que las API Routes siguen funcionando.
+- La carpeta **`out`** (Capacitor `webDir`) solo se genera con `npm run build:android` (o `build:android:clean`). Ese script hace prebuild (stub de `/api/triage` para permitir export), build con `IS_CAPACITOR=true`, postbuild (restaura la ruta) y `npx cap sync`. No ejecutes `npx cap copy` sin haber corrido antes `npm run build:android`.
+
 Para que la APK envíe **datos reales del formulario** y no quede atrapada en caché con código viejo:
 
 ## 1. Desinstalar la app anterior del celular

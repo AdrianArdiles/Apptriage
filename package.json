@@ -4,8 +4,12 @@
   "private": true,
   "scripts": {
     "app:build": "next build && npx cap sync",
-    "build:android": "cross-env IS_CAPACITOR=true npm run build && npx cap sync",
+    "build:android": "cross-env IS_CAPACITOR=true node scripts/prebuild-capacitor.js && cross-env IS_CAPACITOR=true npm run build && cross-env IS_CAPACITOR=true node scripts/postbuild-capacitor.js && npx cap sync",
     "build:android:clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true}); require('fs').rmSync('.next',{recursive:true,force:true});\" && npm run build:android",
+    "prebuild:capacitor": "node scripts/prebuild-capacitor.js",
+    "postbuild:capacitor": "node scripts/postbuild-capacitor.js",
+    "cap:copy": "npm run build:android",
+    "build:mobile": "npm run build && npx cap copy android && npx cap sync android",
     "dev": "next dev",
     "dev:network": "next dev --hostname 0.0.0.0",
     "build": "prisma generate && next build",
