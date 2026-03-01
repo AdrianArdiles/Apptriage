@@ -6,9 +6,15 @@ import { generarRecomendacion } from "@/lib/triage-logic";
 import { categorizarConLLM, nivelNombreAGravedad } from "@/lib/triage-llm";
 import { gravedadToColorAlerta } from "@/lib/color-alerta";
 import { prisma } from "@/lib/prisma";
+import { CORS_HEADERS } from "@/lib/cors";
 
 /** Necesario para permitir build con output: 'export' (app Capacitor). En producción móvil usar backend desplegado. */
 export const dynamic = "force-static";
+
+/** Respuesta a preflight CORS (OPTIONS) desde Capacitor/localhost. */
+export function OPTIONS(): NextResponse {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
 
 /**
  * POST /api/triage
@@ -33,7 +39,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     ) {
       return NextResponse.json(
         { error: "Faltan paciente_id o sintomas_texto" },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       );
     }
 
@@ -51,7 +57,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (!paciente_id || !sintomas_texto) {
       return NextResponse.json(
         { error: "paciente_id y sintomas_texto son obligatorios" },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       );
     }
 
@@ -60,7 +66,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         {
           error: `Los síntomas deben tener al menos ${MIN_SINTOMAS_CARACTERES} caracteres.`,
         },
-        { status: 400 }
+        { status: 400, headers: CORS_HEADERS }
       );
     }
 
@@ -143,11 +149,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       // No bloqueamos el triaje: el usuario recibe el resultado aunque la BD falle
     }
 
-    return NextResponse.json(registro);
+    return NextResponse.json(registro, { headers: CORS_HEADERS });
   } catch {
     return NextResponse.json(
       { error: "Error al procesar el triaje" },
-      { status: 500 }
+      { status: 500, headers: CORS_HEADERS }
     );
   }
 }
