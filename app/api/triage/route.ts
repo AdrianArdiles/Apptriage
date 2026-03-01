@@ -7,17 +7,15 @@ import { categorizarConLLM, nivelNombreAGravedad } from "@/lib/triage-llm";
 import { gravedadToColorAlerta } from "@/lib/color-alerta";
 import { prisma } from "@/lib/prisma";
 
-/** Headers CORS para POST y OPTIONS (evitar 405 en móviles). */
+export const dynamic = "force-dynamic";
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  "Content-Type": "application/json",
 } as const;
 
-/** Necesario para build con output: 'export' (app Capacitor). */
-export const dynamic = "force-static";
-
-/** Preflight: status 200 y headers CORS. Sin redirecciones. */
 export async function OPTIONS(): Promise<NextResponse> {
   return new NextResponse(null, {
     status: 200,
@@ -25,10 +23,6 @@ export async function OPTIONS(): Promise<NextResponse> {
   });
 }
 
-/**
- * POST /api/triage — método POST en mayúsculas.
- * Todas las respuestas incluyen los mismos headers CORS.
- */
 export async function POST(request: Request): Promise<NextResponse> {
   try {
     const body: unknown = await request.json();

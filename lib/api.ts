@@ -2,7 +2,7 @@ import { CapacitorHttp } from "@capacitor/core";
 
 export const API_BASE_URL = "https://apptriage.vercel.app";
 
-/** URL absoluta del endpoint de triaje (obligatoria para CapacitorHttp en Android). */
+/** URL absoluta sin barra final (evita redirección 301/302 que rompe POST en Android). */
 export const TRIAGE_API_URL = "https://apptriage.vercel.app/api/triage";
 
 export function apiUrl(path: string): string {
@@ -20,8 +20,9 @@ export async function postTriage(data: Record<string, unknown>): Promise<{
   data: unknown;
 }> {
   try {
+    console.log("Iniciando envío a: " + TRIAGE_API_URL);
     const response = await CapacitorHttp.post({
-      url: "https://apptriage.vercel.app/api/triage",
+      url: TRIAGE_API_URL,
       headers: {
         "Content-Type": "application/json",
       },

@@ -19,9 +19,14 @@ export default function TriagePage(): React.ReactElement {
 
   const handleSubmit = React.useCallback(async (_data: FormularioEntrada) => {
     try {
+      const url = "https://apptriage.vercel.app/api/triage";
+      console.log("Iniciando envío a: " + url);
       alert("Iniciando envío...");
-      const res = await fetch("https://apptriage.vercel.app/api/triage", {
+      const res = await fetch(url, {
         method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ test: true }),
       });
       alert("Respuesta recibida: " + res.status);
