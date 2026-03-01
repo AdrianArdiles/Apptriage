@@ -7,7 +7,6 @@ import { TriageResult } from "@/components/triage-result";
 import { ModalConfirmacionIngreso } from "@/components/modal-confirmacion-ingreso";
 import { SpinnerMedico } from "@/components/spinner-medico";
 import type { FormularioEntrada } from "@/components/triage-form";
-import { postTriage } from "@/lib/api";
 import type { RegistroTriage } from "@/lib/types";
 
 export default function TriagePage(): React.ReactElement {
@@ -18,33 +17,18 @@ export default function TriagePage(): React.ReactElement {
     React.useState<RegistroTriage | null>(null);
   const [modalConfirmacionOpen, setModalConfirmacionOpen] = React.useState(false);
 
-  const handleSubmit = React.useCallback(
-    async (data: FormularioEntrada) => {
-      setIsSubmitting(true);
-      setError(null);
-      setResultado(null);
-      setRespuestaPendienteConfirmacion(null);
-      setModalConfirmacionOpen(false);
-      try {
-        const { status, data: json } = await postTriage(data as Record<string, unknown>);
-        const parsed = json as RegistroTriage | { error?: string };
-        if (status < 200 || status >= 300) {
-          setError("error" in parsed ? parsed.error ?? "Error en el servidor" : "Error en el servidor");
-          return;
-        }
-        const registro = parsed as RegistroTriage;
-        setRespuestaPendienteConfirmacion(registro);
-        setModalConfirmacionOpen(true);
-      } catch (e) {
-        const message =
-          e instanceof Error ? e.message : "No se pudo conectar con el servidor. Intente de nuevo.";
-        setError(message);
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
-    []
-  );
+  const handleSubmit = React.useCallback(async (_data: FormularioEntrada) => {
+    try {
+      alert("Iniciando envío...");
+      const res = await fetch("https://apptriage.vercel.app/api/triage", {
+        method: "POST",
+        body: JSON.stringify({ test: true }),
+      });
+      alert("Respuesta recibida: " + res.status);
+    } catch (e) {
+      alert("ERROR CRÍTICO: " + String(e));
+    }
+  }, []);
 
   const handleConfirmarIngreso = React.useCallback(() => {
     if (respuestaPendienteConfirmacion) {
@@ -98,6 +82,7 @@ export default function TriagePage(): React.ReactElement {
       </header>
 
       <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 sm:py-12 md:px-8">
+        <p className="mb-4 text-xs text-slate-400">VERSIÓN: DEBUG-001</p>
         {error && (
           <div
             role="alert"

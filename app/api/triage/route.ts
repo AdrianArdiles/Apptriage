@@ -6,31 +6,28 @@ import { generarRecomendacion } from "@/lib/triage-logic";
 import { categorizarConLLM, nivelNombreAGravedad } from "@/lib/triage-llm";
 import { gravedadToColorAlerta } from "@/lib/color-alerta";
 import { prisma } from "@/lib/prisma";
-import { CORS_HEADERS } from "@/lib/cors";
 
-/** Necesario para permitir build con output: 'export' (app Capacitor). En producción móvil usar backend desplegado. */
+/** Headers CORS para POST y OPTIONS (evitar 405 en móviles). */
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization",
+} as const;
+
+/** Necesario para build con output: 'export' (app Capacitor). */
 export const dynamic = "force-static";
 
-/** Preflight CORS: permite cualquier origen y métodos POST, OPTIONS desde móviles. */
+/** Preflight: status 200 y headers CORS. Sin redirecciones. */
 export async function OPTIONS(): Promise<NextResponse> {
   return new NextResponse(null, {
-    status: 204,
+    status: 200,
     headers: CORS_HEADERS,
   });
 }
 
 /**
- * POST /api/triage
- *
- * Recibe el cuerpo del formulario de entrada (formulario_entrada):
- * - paciente_id: string
- * - sintomas_texto: string
- * - signos_vitales?: SignosVitales
- * - nombre_paciente?: string (opcional, si no se envía se usa paciente_id)
- * - dni?: string (opcional)
- *
- * Clasifica con IA, guarda en base de datos (Consultas) y en memoria (mock), devuelve el registro.
- * Todas las respuestas incluyen Access-Control-Allow-Origin: * (CORS permisivo para móviles).
+ * POST /api/triage — método POST en mayúsculas.
+ * Todas las respuestas incluyen los mismos headers CORS.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   try {
@@ -150,7 +147,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       });
     } catch (dbError) {
       console.error("Error al guardar consulta en BD (triaje igualmente válido):", dbError);
-      // No bloqueamos el triaje: el usuario recibe el resultado aunque la BD falle
     }
 
     return NextResponse.json(registro, { headers: CORS_HEADERS });
