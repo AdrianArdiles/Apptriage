@@ -25,6 +25,34 @@ export type PayloadTriage = {
 };
 
 /**
+ * Devuelve un objeto plano para el servidor: números como Number(), textos con || '', signos_vitales como objeto simple.
+ */
+function cleanData(datos: PayloadTriage): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    paciente_id: String(datos.paciente_id ?? "").trim() || "",
+    sintomas_texto: String(datos.sintomas_texto ?? "").trim() || "",
+  };
+  out.nombre_paciente = String(datos.nombre_paciente ?? "").trim() || "";
+  out.dni = String(datos.dni ?? "").trim() || "";
+  if (datos.signos_vitales && typeof datos.signos_vitales === "object") {
+    const sv: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(datos.signos_vitales)) {
+      sv[k] = typeof v === "number" ? Number(v) : String(v ?? "").trim() || "";
+    }
+    out.signos_vitales = sv;
+  }
+  if (datos.glasgow && typeof datos.glasgow === "object") {
+    out.glasgow = {
+      E: Number(datos.glasgow.E),
+      V: Number(datos.glasgow.V),
+      M: Number(datos.glasgow.M),
+      puntaje_glasgow: Number(datos.glasgow.puntaje_glasgow),
+    };
+  }
+  return out;
+}
+
+/**
  * POST a la API de triaje.
  * En Android/iOS (APK) usa CapacitorHttp para enviar el body desde el cliente nativo
  * y evitar que el WebView envíe el body vacío en POST cross-origin. En web usa fetch.
@@ -34,11 +62,11 @@ export async function postTriage(datos: PayloadTriage): Promise<{
   data: unknown;
 }> {
   try {
-    console.log("Iniciando envío a: " + TRIAGE_API_URL);
-    const body = JSON.stringify(datos);
+    const formData = cleanData(datos);
+    console.log("Datos reales a enviar:", JSON.stringify(formData));
     const headers = {
-      Accept: "application/json",
       "Content-Type": "application/json",
+      Accept: "application/json",
     };
 
     if (Capacitor.isNativePlatform()) {
@@ -46,7 +74,7 @@ export async function postTriage(datos: PayloadTriage): Promise<{
         method: "POST",
         url: TRIAGE_API_URL,
         headers,
-        data: JSON.parse(body),
+        data: formData,
       });
       return {
         status: response.status,
@@ -57,7 +85,7 @@ export async function postTriage(datos: PayloadTriage): Promise<{
     const response = await fetch(TRIAGE_API_URL, {
       method: "POST",
       headers,
-      body: JSON.stringify(datos),
+      body: JSON.stringify(formData),
     });
     const data = await response.json().catch(() => ({}));
     return {

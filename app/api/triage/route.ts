@@ -27,9 +27,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   const rawText = await request.text();
   console.log("=== TEXTO RECIBIDO ===", rawText);
 
-  let data: unknown;
+  let data: Record<string, unknown>;
   try {
-    data = JSON.parse(rawText || "{}");
+    data = JSON.parse(rawText || "{}") as Record<string, unknown>;
   } catch {
     return NextResponse.json(
       { error: "Error de parseo", texto: rawText },
@@ -40,25 +40,22 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     if (!data || typeof data !== "object") {
       return NextResponse.json(
-        { error: "El cuerpo debe ser un objeto JSON", texto: rawText },
+        { error: "Faltan campos", recibido: data },
         { status: 400, headers: CORS_HEADERS }
       );
     }
 
-    const faltan: string[] = [];
-    if (!("paciente_id" in data)) faltan.push("paciente_id");
-    if (!("sintomas_texto" in data)) faltan.push("sintomas_texto");
-    if (faltan.length > 0) {
+    const tienePacienteId = "paciente_id" in data && data.paciente_id != null && String(data.paciente_id).trim() !== "";
+    const tieneSintomas = "sintomas_texto" in data && data.sintomas_texto != null && String(data.sintomas_texto).trim().length >= MIN_SINTOMAS_CARACTERES;
+
+    if (!tienePacienteId || !tieneSintomas) {
       return NextResponse.json(
-        {
-          error: `Falta el campo obligatorio: ${faltan.join(", ")}`,
-          camposFaltantes: faltan,
-        },
+        { error: "Faltan campos", recibido: data },
         { status: 400, headers: CORS_HEADERS }
       );
     }
 
-    const entrada = data as EntradaTriage;
+    const entrada = data as unknown as EntradaTriage;
     const paciente_id = String(entrada.paciente_id).trim();
     const sintomas_texto = String(entrada.sintomas_texto).trim();
     const signos_vitales = entrada.signos_vitales ?? {};
@@ -68,28 +65,6 @@ export async function POST(request: Request): Promise<NextResponse> {
         : paciente_id;
     const dni =
       typeof entrada.dni === "string" && entrada.dni.trim() ? entrada.dni.trim() : null;
-
-    if (!paciente_id || !sintomas_texto) {
-      const vacios: string[] = [];
-      if (!paciente_id) vacios.push("paciente_id");
-      if (!sintomas_texto) vacios.push("sintomas_texto");
-      return NextResponse.json(
-        {
-          error: `Campo obligatorio vacío: ${vacios.join(", ")}`,
-          camposVacios: vacios,
-        },
-        { status: 400, headers: CORS_HEADERS }
-      );
-    }
-
-    if (sintomas_texto.length < MIN_SINTOMAS_CARACTERES) {
-      return NextResponse.json(
-        {
-          error: `Los síntomas deben tener al menos ${MIN_SINTOMAS_CARACTERES} caracteres.`,
-        },
-        { status: 400, headers: CORS_HEADERS }
-      );
-    }
 
     const glasgow =
       entrada.glasgow &&
@@ -169,7 +144,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       console.error("Error al guardar consulta en BD (triaje igualmente válido):", dbError);
     }
 
-    return NextResponse.json(registro, { headers: CORS_HEADERS });
+    return NextResponse.json(
+      { success: true, registro },
+      { status: 200, headers: CORS_HEADERS }
+    );
   } catch {
     return NextResponse.json(
       { error: "Error al procesar el triaje" },

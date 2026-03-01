@@ -37,10 +37,12 @@ export default function TriagePage(): React.ReactElement {
     setError(null);
     setIsSubmitting(true);
     try {
-      const datos = toPayloadTriage(data);
-      const { status, data: resData } = await postTriage(datos);
+      const formData = toPayloadTriage(data);
+      console.log("Datos reales a enviar:", JSON.stringify(formData));
+      const { status, data: resData } = await postTriage(formData);
       if (status >= 200 && status < 300) {
-        setResultado(resData as RegistroTriage);
+        const payload = resData as { success?: boolean; id?: unknown; registro?: RegistroTriage };
+        setResultado(payload.registro ?? (resData as RegistroTriage));
       } else {
         const errMsg = typeof resData === "object" && resData !== null && "error" in resData
           ? String((resData as { error: unknown }).error)
