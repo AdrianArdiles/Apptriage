@@ -24,21 +24,41 @@ export async function OPTIONS(): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const rawText = await request.text();
+  console.log("=== TEXTO RECIBIDO ===", rawText);
+
+  let data: unknown;
   try {
-    const body: unknown = await request.json();
-    if (
-      !body ||
-      typeof body !== "object" ||
-      !("paciente_id" in body) ||
-      !("sintomas_texto" in body)
-    ) {
+    data = JSON.parse(rawText || "{}");
+  } catch {
+    return NextResponse.json(
+      { error: "Error de parseo", texto: rawText },
+      { status: 400, headers: CORS_HEADERS }
+    );
+  }
+
+  try {
+    if (!data || typeof data !== "object") {
       return NextResponse.json(
-        { error: "Faltan paciente_id o sintomas_texto" },
+        { error: "El cuerpo debe ser un objeto JSON", texto: rawText },
         { status: 400, headers: CORS_HEADERS }
       );
     }
 
-    const entrada = body as EntradaTriage;
+    const faltan: string[] = [];
+    if (!("paciente_id" in data)) faltan.push("paciente_id");
+    if (!("sintomas_texto" in data)) faltan.push("sintomas_texto");
+    if (faltan.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Falta el campo obligatorio: ${faltan.join(", ")}`,
+          camposFaltantes: faltan,
+        },
+        { status: 400, headers: CORS_HEADERS }
+      );
+    }
+
+    const entrada = data as EntradaTriage;
     const paciente_id = String(entrada.paciente_id).trim();
     const sintomas_texto = String(entrada.sintomas_texto).trim();
     const signos_vitales = entrada.signos_vitales ?? {};
@@ -50,8 +70,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       typeof entrada.dni === "string" && entrada.dni.trim() ? entrada.dni.trim() : null;
 
     if (!paciente_id || !sintomas_texto) {
+      const vacios: string[] = [];
+      if (!paciente_id) vacios.push("paciente_id");
+      if (!sintomas_texto) vacios.push("sintomas_texto");
       return NextResponse.json(
-        { error: "paciente_id y sintomas_texto son obligatorios" },
+        {
+          error: `Campo obligatorio vacío: ${vacios.join(", ")}`,
+          camposVacios: vacios,
+        },
         { status: 400, headers: CORS_HEADERS }
       );
     }

@@ -6,8 +6,24 @@ import { TriageForm } from "@/components/triage-form";
 import { TriageResult } from "@/components/triage-result";
 import { ModalConfirmacionIngreso } from "@/components/modal-confirmacion-ingreso";
 import { SpinnerMedico } from "@/components/spinner-medico";
+import { postTriage, type PayloadTriage } from "@/lib/api";
 import type { FormularioEntrada } from "@/components/triage-form";
 import type { RegistroTriage } from "@/lib/types";
+
+/** Construye un objeto limpio con solo las propiedades que espera el backend (paciente_id, sintomas_texto, etc.). */
+function toPayloadTriage(data: FormularioEntrada): PayloadTriage {
+  const payload: PayloadTriage = {
+    paciente_id: data.paciente_id,
+    sintomas_texto: data.sintomas_texto,
+  };
+  if (data.nombre_paciente?.trim()) payload.nombre_paciente = data.nombre_paciente.trim();
+  if (data.dni?.trim()) payload.dni = data.dni.trim();
+  if (data.signos_vitales && Object.keys(data.signos_vitales).length > 0) {
+    payload.signos_vitales = data.signos_vitales;
+  }
+  if (data.glasgow) payload.glasgow = data.glasgow;
+  return payload;
+}
 
 export default function TriagePage(): React.ReactElement {
   const [resultado, setResultado] = React.useState<RegistroTriage | null>(null);
@@ -17,21 +33,24 @@ export default function TriagePage(): React.ReactElement {
     React.useState<RegistroTriage | null>(null);
   const [modalConfirmacionOpen, setModalConfirmacionOpen] = React.useState(false);
 
-  const handleSubmit = React.useCallback(async (_data: FormularioEntrada) => {
+  const handleSubmit = React.useCallback(async (data: FormularioEntrada) => {
+    setError(null);
+    setIsSubmitting(true);
     try {
-      const url = "https://apptriage.vercel.app/api/triage";
-      console.log("Iniciando envío a: " + url);
-      alert("Iniciando envío...");
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ test: true }),
-      });
-      alert("Respuesta recibida: " + res.status);
+      const datos = toPayloadTriage(data);
+      const { status, data: resData } = await postTriage(datos);
+      if (status >= 200 && status < 300) {
+        setResultado(resData as RegistroTriage);
+      } else {
+        const errMsg = typeof resData === "object" && resData !== null && "error" in resData
+          ? String((resData as { error: unknown }).error)
+          : `Error ${status}`;
+        setError(errMsg);
+      }
     } catch (e) {
-      alert("ERROR CRÍTICO: " + String(e));
+      setError(String(e));
+    } finally {
+      setIsSubmitting(false);
     }
   }, []);
 
