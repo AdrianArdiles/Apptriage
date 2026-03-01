@@ -12,16 +12,24 @@ export function apiUrl(path: string): string {
 }
 
 /**
- * Objeto limpio que coincide exactamente con lo que espera el backend (EntradaTriage).
- * Solo incluye: paciente_id, sintomas_texto, nombre_paciente?, dni?, signos_vitales?, glasgow?
+ * Objeto para la API: Ficha clínica digital ambulancia (XABCDE).
+ * Incluye: blood_loss, airway_status, respiration_rate, pulse, bp_systolic, bp_diastolic, glasgow_score, etc.
  */
 export type PayloadTriage = {
   paciente_id: string;
   sintomas_texto: string;
+  hora_inicio_atencion?: string;
   nombre_paciente?: string;
   dni?: string;
   signos_vitales?: Record<string, unknown>;
   glasgow?: { E: number; V: number; M: number; puntaje_glasgow: number };
+  blood_loss?: string;
+  airway_status?: string;
+  respiration_rate?: number;
+  pulse?: number;
+  bp_systolic?: number;
+  bp_diastolic?: number;
+  glasgow_score?: number;
 };
 
 /**
@@ -32,6 +40,7 @@ function cleanData(datos: PayloadTriage): Record<string, unknown> {
     paciente_id: String(datos.paciente_id ?? "").trim() || "",
     sintomas_texto: String(datos.sintomas_texto ?? "").trim() || "",
   };
+  if (datos.hora_inicio_atencion) out.hora_inicio_atencion = String(datos.hora_inicio_atencion).trim();
   out.nombre_paciente = String(datos.nombre_paciente ?? "").trim() || "";
   out.dni = String(datos.dni ?? "").trim() || "";
   if (datos.signos_vitales && typeof datos.signos_vitales === "object") {
@@ -49,6 +58,13 @@ function cleanData(datos: PayloadTriage): Record<string, unknown> {
       puntaje_glasgow: Number(datos.glasgow.puntaje_glasgow),
     };
   }
+  if (datos.glasgow_score != null) out.glasgow_score = Number(datos.glasgow_score);
+  if (datos.blood_loss != null && String(datos.blood_loss).trim() !== "") out.blood_loss = String(datos.blood_loss).trim();
+  if (datos.airway_status != null && String(datos.airway_status).trim() !== "") out.airway_status = String(datos.airway_status).trim();
+  if (datos.respiration_rate != null) out.respiration_rate = Number(datos.respiration_rate);
+  if (datos.pulse != null) out.pulse = Number(datos.pulse);
+  if (datos.bp_systolic != null) out.bp_systolic = Number(datos.bp_systolic);
+  if (datos.bp_diastolic != null) out.bp_diastolic = Number(datos.bp_diastolic);
   return out;
 }
 

@@ -68,6 +68,16 @@ export interface RegistroTriage {
   dni?: string;
   /** Desglose Glasgow si se registró (para historial). */
   glasgow?: GlasgowDesglose;
+  /** Hora de inicio de atención (evaluación inicial paramédicos). */
+  hora_inicio_atencion?: string;
+  /** Ficha clínica: pérdida de sangre, estado vía aérea, etc. */
+  blood_loss?: string;
+  airway_status?: string;
+  respiration_rate?: number;
+  pulse?: number;
+  bp_systolic?: number;
+  bp_diastolic?: number;
+  glasgow_score?: number;
 }
 
 /** Desglose Escala de Glasgow (E, V, M) para el prompt de la IA. */
@@ -78,15 +88,31 @@ export interface GlasgowDesglose {
   puntaje_glasgow: number;
 }
 
-/** Payload para enviar síntomas y signos vitales al API. */
+/** Payload para enviar síntomas y signos vitales al API (paramédicos/ambulancia). */
 export interface EntradaTriage {
   paciente_id: string;
   sintomas_texto: string;
   signos_vitales?: SignosVitales;
+  /** Hora de inicio de atención (ISO string). */
+  hora_inicio_atencion?: string;
   /** Opcional: nombre del paciente (si no se envía, se usa paciente_id). */
   nombre_paciente?: string;
   /** Opcional: DNI del paciente. */
   dni?: string;
   /** Opcional: Escala de Glasgow (E, V, M y total). La IA da prioridad absoluta si puntaje_glasgow ≤ 8. */
   glasgow?: GlasgowDesglose;
+  /** Ficha clínica digital: pérdida de sangre. */
+  blood_loss?: string;
+  /** Estado vía aérea. */
+  airway_status?: string;
+  /** Frecuencia respiratoria (rpm). */
+  respiration_rate?: number;
+  /** Pulso (lpm). */
+  pulse?: number;
+  /** Tensión arterial sistólica. */
+  bp_systolic?: number;
+  /** Tensión arterial diastólica. */
+  bp_diastolic?: number;
+  /** Puntaje total Glasgow (3-15). */
+  glasgow_score?: number;
 }

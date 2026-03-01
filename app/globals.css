@@ -17,7 +17,7 @@ html {
 
 body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  @apply bg-white text-slate-800 antialiased;
+  @apply bg-zinc-900 text-zinc-100 antialiased;
 }
 
 /* Área táctil mínima recomendada ~44px */

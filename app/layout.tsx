@@ -8,8 +8,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Triage Médico | Evaluación de síntomas",
-  description: "Herramienta de apoyo para triaje. No sustituye la valoración de un profesional.",
+  title: "Ficha Clínica Digital | Ambulancias",
+  description: "Ficha clínica digital para paramédicos: XABCDE, Glasgow, signos vitales, timestamps.",
 };
 
 export default function RootLayout({

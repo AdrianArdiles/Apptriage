@@ -85,6 +85,17 @@ export async function POST(request: Request): Promise<NextResponse> {
             puntaje_glasgow: entrada.glasgow.puntaje_glasgow,
           }
         : undefined;
+    const hora_inicio_atencion =
+      typeof entrada.hora_inicio_atencion === "string" && entrada.hora_inicio_atencion.trim()
+        ? entrada.hora_inicio_atencion.trim()
+        : undefined;
+    const blood_loss = typeof entrada.blood_loss === "string" && entrada.blood_loss.trim() ? entrada.blood_loss.trim() : undefined;
+    const airway_status = typeof entrada.airway_status === "string" && entrada.airway_status.trim() ? entrada.airway_status.trim() : undefined;
+    const respiration_rate = typeof entrada.respiration_rate === "number" ? entrada.respiration_rate : undefined;
+    const pulse = typeof entrada.pulse === "number" ? entrada.pulse : undefined;
+    const bp_systolic = typeof entrada.bp_systolic === "number" ? entrada.bp_systolic : undefined;
+    const bp_diastolic = typeof entrada.bp_diastolic === "number" ? entrada.bp_diastolic : undefined;
+    const glasgow_score = typeof entrada.glasgow_score === "number" ? entrada.glasgow_score : (glasgow?.puntaje_glasgow);
 
     const resultadoLLM = await categorizarConLLM(
       sintomas_texto,
@@ -132,6 +143,14 @@ export async function POST(request: Request): Promise<NextResponse> {
         ? { recomendacion_inmediata }
         : {}),
       ...(fallbackIA ? { mensaje_fallback: MENSAJE_FALLBACK } : {}),
+      ...(hora_inicio_atencion ? { hora_inicio_atencion } : {}),
+      ...(blood_loss != null ? { blood_loss } : {}),
+      ...(airway_status != null ? { airway_status } : {}),
+      ...(respiration_rate != null ? { respiration_rate } : {}),
+      ...(pulse != null ? { pulse } : {}),
+      ...(bp_systolic != null ? { bp_systolic } : {}),
+      ...(bp_diastolic != null ? { bp_diastolic } : {}),
+      ...(glasgow_score != null ? { glasgow_score } : {}),
     };
 
     guardarTriage(registro);

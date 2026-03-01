@@ -2,26 +2,35 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { TriageForm } from "@/components/triage-form";
+import { ChecklistXABCDE, type DatosEvaluacionInicial } from "@/components/checklist-xabcde";
 import { TriageResult } from "@/components/triage-result";
 import { ModalConfirmacionIngreso } from "@/components/modal-confirmacion-ingreso";
 import { SpinnerMedico } from "@/components/spinner-medico";
 import { postTriage, type PayloadTriage } from "@/lib/api";
-import type { FormularioEntrada } from "@/components/triage-form";
 import type { RegistroTriage } from "@/lib/types";
 
-/** Construye un objeto limpio con solo las propiedades que espera el backend (paciente_id, sintomas_texto, etc.). */
-function toPayloadTriage(data: FormularioEntrada): PayloadTriage {
+/** Construye el payload para la API (Ficha clínica digital: blood_loss, airway_status, pulse, bp_*, glasgow_score, etc.). */
+function toPayloadTriage(data: DatosEvaluacionInicial): PayloadTriage {
   const payload: PayloadTriage = {
     paciente_id: data.paciente_id,
     sintomas_texto: data.sintomas_texto,
   };
-  if (data.nombre_paciente?.trim()) payload.nombre_paciente = data.nombre_paciente.trim();
-  if (data.dni?.trim()) payload.dni = data.dni.trim();
+  if (data.hora_inicio_atencion) payload.hora_inicio_atencion = data.hora_inicio_atencion;
+  const nombre = data.nombre_paciente?.trim();
+  const dni = data.dni?.trim();
+  payload.nombre_paciente = nombre || "Paciente sin identificar";
+  if (dni) payload.dni = dni;
   if (data.signos_vitales && Object.keys(data.signos_vitales).length > 0) {
     payload.signos_vitales = data.signos_vitales as Record<string, unknown>;
   }
   if (data.glasgow) payload.glasgow = data.glasgow;
+  if (data.glasgow_score != null) payload.glasgow_score = data.glasgow_score;
+  if (data.blood_loss != null) payload.blood_loss = data.blood_loss;
+  if (data.airway_status != null) payload.airway_status = data.airway_status;
+  if (data.respiration_rate != null) payload.respiration_rate = data.respiration_rate;
+  if (data.pulse != null) payload.pulse = data.pulse;
+  if (data.bp_systolic != null) payload.bp_systolic = data.bp_systolic;
+  if (data.bp_diastolic != null) payload.bp_diastolic = data.bp_diastolic;
   return payload;
 }
 
@@ -38,7 +47,7 @@ export default function TriagePage(): React.ReactElement {
     setBuildId(new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "medium" }));
   }, []);
 
-  const handleSubmit = React.useCallback(async (data: FormularioEntrada) => {
+  const handleSubmit = React.useCallback(async (data: DatosEvaluacionInicial) => {
     setError(null);
     setIsSubmitting(true);
     try {
@@ -80,11 +89,11 @@ export default function TriagePage(): React.ReactElement {
   }, []);
 
   return (
-    <div className="min-h-screen bg-white font-sans">
-      <header className="border-b border-slate-200/80 bg-white">
+    <div className="min-h-screen bg-zinc-900 font-sans text-zinc-100">
+      <header className="border-b border-zinc-700 bg-zinc-800/90">
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 sm:py-6 md:px-8">
           <div className="flex items-center gap-4">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--medical-slate-blue)] text-white">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 width="22"
@@ -100,27 +109,27 @@ export default function TriagePage(): React.ReactElement {
               </svg>
             </div>
             <div>
-              <h1 className="text-xl font-semibold text-slate-800">Triage Médico</h1>
-              <p className="text-sm text-slate-500">Evaluación de síntomas — Herramienta de apoyo</p>
+              <h1 className="text-xl font-semibold text-zinc-100">Ficha Clínica Digital</h1>
+              <p className="text-sm text-zinc-400">Ambulancias — XABCDE · Glasgow · Timestamps</p>
             </div>
           </div>
           <nav className="flex items-center gap-2">
-            <Link href="/historial" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-sm font-medium text-slate-600 hover:text-slate-900 hover:underline active:opacity-80">
-              Historial de Ingresos
+            <Link href="/historial" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-sm font-medium text-zinc-300 hover:text-zinc-100 hover:underline active:opacity-80">
+              Historial
             </Link>
             <Link href="/dashboard">
-              <span className="inline-flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 active:opacity-80">Dashboard</span>
+              <span className="inline-flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-md border border-zinc-600 bg-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-600 active:opacity-80">Dashboard</span>
             </Link>
           </nav>
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-3xl px-4 py-8 sm:px-6 sm:py-12 md:px-8">
-        <p className="mb-4 text-xs text-slate-400">VERSIÓN: DEBUG-001</p>
+        <p className="mb-4 text-xs text-zinc-500">Dark mode — datos guardados en este dispositivo</p>
         {error && (
           <div
             role="alert"
-            className="mb-8 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+            className="mb-8 rounded-xl border border-red-800 bg-red-900/30 px-4 py-3 text-sm text-red-200"
           >
             {error}
           </div>
@@ -132,13 +141,13 @@ export default function TriagePage(): React.ReactElement {
           <div className="relative">
             {isSubmitting && (
               <div
-                className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border border-slate-200 bg-white/95 backdrop-blur-sm"
+                className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border border-zinc-700 bg-zinc-900/95 backdrop-blur-sm"
                 aria-live="polite"
               >
-                <SpinnerMedico label="La IA está procesando el triaje…" />
+                <SpinnerMedico label="Enviando reporte a central…" />
               </div>
             )}
-            <TriageForm onSubmit={handleSubmit} isSubmitting={isSubmitting} />
+            <ChecklistXABCDE onSubmit={handleSubmit} isSubmitting={isSubmitting} />
           </div>
         )}
 
@@ -150,9 +159,9 @@ export default function TriagePage(): React.ReactElement {
         />
       </main>
 
-      <footer className="mt-16 border-t border-slate-100 bg-slate-50/50 px-4 py-6 text-center text-sm text-slate-500 sm:px-6">
-        <p>Cumplimiento HIPAA simulado con fines educativos. No sustituye una evaluación legal.</p>
-        <p className="mt-2 text-xs text-slate-400">Build ID: {buildId || "…"}</p>
+      <footer className="mt-16 border-t border-zinc-800 bg-zinc-800/50 px-4 py-6 text-center text-sm text-zinc-500 sm:px-6">
+        <p>Ficha clínica para uso en ambulancia. Los datos se guardan localmente hasta enviar.</p>
+        <p className="mt-2 text-xs text-zinc-600">Build: {buildId || "…"}</p>
       </footer>
     </div>
   );
