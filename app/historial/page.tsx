@@ -2,16 +2,24 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LogoEkg } from "@/components/logo-ekg";
+import { useAuth } from "@/lib/auth-context";
 import { getOperadorId, getUnidadId } from "@/lib/operador-storage";
 import {
   getHistorialPdfList,
   removeFromHistorialPdf,
   type HistorialPdfEntry,
 } from "@/lib/historial-pdf-storage";
+import {
+  getAtencionesFromFirebase,
+  removeAtencionFromFirebase,
+} from "@/lib/firebase-atenciones";
+import { Capacitor } from "@capacitor/core";
 import { getPDFBlob } from "@/lib/pdf-export";
 import { getLogoDataUrl } from "@/lib/logo-image";
-import { generateAndSharePDF } from "@/lib/share-pdf";
+import { generateAndSharePDF, generatePDFAndGetUri } from "@/lib/share-pdf";
+import { FileOpener } from "@capacitor-community/file-opener";
 import {
   Dialog,
   DialogContent,
@@ -126,14 +134,50 @@ function formatFileName(hora: string, paciente: string): string {
 }
 
 export default function HistorialPage(): React.ReactElement {
+  const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const [list, setList] = React.useState<HistorialPdfEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [busqueda, setBusqueda] = React.useState("");
   const [actionLoadingId, setActionLoadingId] = React.useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = React.useState<string | null>(null);
 
-  const refreshList = React.useCallback(() => {
-    setList(getHistorialPdfList());
+  React.useEffect(() => {
+    if (authLoading) return;
+    if (!user) router.replace("/");
+  }, [user, authLoading, router]);
+
+  const refreshList = React.useCallback(async () => {
+    const localList = getHistorialPdfList();
+    try {
+      const firebaseList = await getAtencionesFromFirebase();
+      const byId = new Map<string, HistorialPdfEntry>();
+      firebaseList.forEach((e) => {
+        byId.set(e.id, {
+          id: e.id,
+          createdAt: e.createdAt,
+          nombrePaciente: e.nombrePaciente,
+          pacienteId: e.pacienteId,
+          operadorId: e.operadorId,
+          unidadId: e.unidadId,
+          data: e.data,
+        });
+      });
+      localList.forEach((e) => {
+        const existing = byId.get(e.id);
+        if (existing) {
+          byId.set(e.id, { ...existing, fileUri: e.fileUri ?? existing.fileUri });
+        } else {
+          byId.set(e.id, e);
+        }
+      });
+      const merged = Array.from(byId.values()).sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      setList(merged);
+    } catch {
+      setList(localList);
+    }
   }, []);
 
   const filtrados = React.useMemo(() => {
@@ -146,21 +190,46 @@ export default function HistorialPage(): React.ReactElement {
   }, [list, busqueda]);
 
   React.useEffect(() => {
-    refreshList();
-    setLoading(false);
+    refreshList().finally(() => setLoading(false));
   }, [refreshList]);
 
   const handleAbrir = React.useCallback(async (entry: HistorialPdfEntry) => {
     setActionLoadingId(entry.id);
     try {
-      const logoDataUrl = await getLogoDataUrl();
-      const blob = getPDFBlob(entry.data, logoDataUrl ? { logoDataUrl } : undefined);
-      const url = URL.createObjectURL(blob);
-      window.open(url, "_blank", "noopener,noreferrer");
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      if (Capacitor.isNativePlatform()) {
+        let uriToOpen: string | null = entry.fileUri ?? null;
+        if (uriToOpen) {
+          try {
+            await FileOpener.open({
+              filePath: uriToOpen,
+              contentType: "application/pdf",
+            });
+            return;
+          } catch {
+            uriToOpen = null;
+          }
+        }
+        if (!uriToOpen) {
+          uriToOpen = await generatePDFAndGetUri(entry.data);
+          if (uriToOpen) {
+            await FileOpener.open({
+              filePath: uriToOpen,
+              contentType: "application/pdf",
+            });
+          } else {
+            alert("No se pudo generar el archivo para visualizar.");
+          }
+        }
+      } else {
+        const logoDataUrl = await getLogoDataUrl();
+        const blob = getPDFBlob(entry.data, logoDataUrl ? { logoDataUrl } : undefined);
+        const url = URL.createObjectURL(blob);
+        window.open(url, "_blank", "noopener,noreferrer");
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      }
     } catch (e) {
       console.error("Error al abrir PDF:", e);
-      alert("No se pudo abrir el PDF.");
+      alert("Archivo no encontrado en el dispositivo.");
     } finally {
       setActionLoadingId(null);
     }
@@ -181,11 +250,20 @@ export default function HistorialPage(): React.ReactElement {
   const handleEliminar = React.useCallback(
     (id: string) => {
       removeFromHistorialPdf(id);
+      removeAtencionFromFirebase(id);
       setDeleteConfirmId(null);
       refreshList();
     },
     [refreshList]
   );
+
+  if (!authLoading && !user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center font-sans text-slate-400" style={{ backgroundColor: BG_DARK }}>
+        Redirigiendo…
+      </div>
+    );
+  }
 
   return (
     <div
@@ -330,9 +408,13 @@ export default function HistorialPage(): React.ReactElement {
                     <div className="mt-3 flex items-center gap-2 sm:mt-0 sm:gap-2">
                       <button
                         type="button"
-                        onClick={() => handleAbrir(entry)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleAbrir(entry);
+                        }}
                         disabled={isBusy}
-                        className="flex min-h-[48px] min-w-[48px] flex-col items-center justify-center rounded-xl transition hover:opacity-90 disabled:opacity-50"
+                        className="flex min-h-[48px] min-w-[48px] touch-manipulation flex-col items-center justify-center rounded-xl transition hover:opacity-90 disabled:opacity-50"
                         style={{ backgroundColor: BLUE_MEDICAL }}
                         aria-label="Ver PDF"
                       >

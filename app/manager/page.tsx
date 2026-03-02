@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { getHistorialPdfList, type HistorialPdfEntry } from "@/lib/historial-pdf-storage";
 import {
   subscribeIntervenciones,
@@ -9,13 +9,16 @@ import {
 } from "@/lib/firebase-intervenciones";
 import { sendMensaje, subscribeAllMensajes, type MensajePayload } from "@/lib/firebase-mensajes";
 
-const BG_DARK = "#0f172a";
+const ManagerMap = dynamic(
+  () => import("@/components/manager-map").then((m) => ({ default: m.ManagerMap })),
+  { ssr: false, loading: () => <div className="h-[320px] rounded-xl border border-slate-600 bg-slate-800 flex items-center justify-center text-slate-400">Cargando mapa…</div> }
+);
+
 const CARD_BG = "#1e293b";
 const GOLD = "#eab308";
 const GOLD_DIM = "rgba(234, 179, 8, 0.2)";
 const RED_CRITICAL = "#dc2626";
 const ORANGE_WARNING = "#ea580c";
-const ORANGE_DIM = "rgba(234, 88, 12, 0.25)";
 const GREEN_READY = "#16a34a";
 const BLUE_BASE = "#2563eb";
 
@@ -35,7 +38,6 @@ const STEP_LABELS: Record<number, string> = {
 };
 
 export default function ManagerPage(): React.ReactElement {
-  const router = useRouter();
   const [list, setList] = React.useState<HistorialPdfEntry[]>([]);
   const [liveIntervenciones, setLiveIntervenciones] = React.useState<
     Record<string, IntervencionPayload>
@@ -44,6 +46,7 @@ export default function ManagerPage(): React.ReactElement {
   const [filterOperador, setFilterOperador] = React.useState<string>("");
   const [mensajeDraft, setMensajeDraft] = React.useState<Record<string, string>>({});
   const [liveMensajes, setLiveMensajes] = React.useState<Record<string, MensajePayload>>({});
+  const [firebaseError, setFirebaseError] = React.useState<string | null>(null);
 
   const PRESETS = [
     { label: "HOSPITAL LISTO", text: "[HOSPITAL LISTO]", color: GREEN_READY },
@@ -57,9 +60,13 @@ export default function ManagerPage(): React.ReactElement {
   }, []);
 
   React.useEffect(() => {
-    const unsubscribe = subscribeIntervenciones((data) => {
-      setLiveIntervenciones(data ?? {});
-    });
+    const unsubscribe = subscribeIntervenciones(
+      (data) => {
+        setFirebaseError(null);
+        setLiveIntervenciones(data ?? {});
+      },
+      (err) => setFirebaseError(err?.message ?? "Error de conexión Firebase")
+    );
     return unsubscribe;
   }, []);
 
@@ -103,83 +110,79 @@ export default function ManagerPage(): React.ReactElement {
     return result;
   }, [list, filterUnidad, filterOperador]);
 
-  const handleCerrarGestion = () => {
-    router.push("/");
-  };
-
   return (
-    <div
-      className="min-h-screen font-sans text-slate-100"
-      style={{ backgroundColor: BG_DARK }}
-    >
-      {/* Header Centro de Control */}
-      <header
-        className="sticky top-0 z-40 border-b px-4 py-3"
-        style={{ backgroundColor: CARD_BG, borderColor: GOLD_DIM }}
-      >
-        <div className="mx-auto flex max-w-4xl items-center justify-between gap-4">
-          <div>
-            <h1 className="text-lg font-bold" style={{ color: GOLD }}>
-              Centro de Control
-            </h1>
-            <p className="text-xs text-slate-400">Monitorización en tiempo real · Solo lectura</p>
-          </div>
-          <button
-            type="button"
-            onClick={handleCerrarGestion}
-            className="rounded-xl border-2 px-4 py-2.5 text-sm font-semibold transition hover:opacity-90"
-            style={{ borderColor: GOLD, color: GOLD }}
-          >
-            Cerrar Gestión
-          </button>
+    <>
+      <h2 className="mb-2 text-xl font-bold text-white lg:text-2xl">Monitor en Vivo</h2>
+      <p className="mb-6 text-sm text-slate-400">Monitorización en tiempo real · Unidades activas y mensajería</p>
+
+      {firebaseError && (
+        <div role="alert" className="mb-4">
+          <p className="rounded-lg border border-red-800 bg-red-900/40 px-3 py-2 text-sm text-red-200">
+            Conexión Firebase: {firebaseError}
+          </p>
         </div>
-      </header>
+      )}
 
-      <main className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
-        {/* Tarjetas de resumen */}
-        <section className="mb-6 grid gap-4 sm:grid-cols-2">
-          <div
-            className="rounded-xl border p-5"
-            style={{ backgroundColor: CARD_BG, borderColor: GOLD_DIM }}
-          >
-            <h2 className="mb-1 text-sm font-medium uppercase tracking-wide text-slate-400">
-              Reportes en dispositivo
-            </h2>
-            <p className="text-3xl font-bold" style={{ color: GOLD }}>
-              {list.length}
-            </p>
-            <p className="mt-1 text-sm text-slate-400">guardados en memoria local</p>
-          </div>
-          <div
-            className="rounded-xl border p-5"
-            style={{ backgroundColor: CARD_BG, borderColor: GOLD_DIM }}
-          >
-            <h2 className="mb-1 text-sm font-medium uppercase tracking-wide text-slate-400">
-              Unidades activas ahora
-            </h2>
-            <p className="text-3xl font-bold" style={{ color: GOLD }}>
-              {liveEntries.length}
-            </p>
-            <p className="mt-1 text-sm text-slate-400">sincronizando con Firebase</p>
-          </div>
-        </section>
-
-        {/* Vista en tiempo real: intervenciones activas */}
-        <section className="mb-8">
-          <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-slate-400">
-            Unidades activas en la calle (tiempo real)
+      {/* Tarjetas de resumen */}
+      <section className="mb-6 grid gap-4 sm:grid-cols-2">
+        <div
+          className="rounded-xl border p-5"
+          style={{ backgroundColor: CARD_BG, borderColor: GOLD_DIM }}
+        >
+          <h2 className="mb-1 text-sm font-medium uppercase tracking-wide text-slate-400">
+            Reportes en dispositivo
           </h2>
-          {liveEntries.length === 0 ? (
-            <div
-              className="rounded-xl border border-slate-600/50 p-8 text-center"
-              style={{ backgroundColor: CARD_BG }}
-            >
-              <p className="text-slate-400">
-                No hay intervenciones activas. Las unidades aparecerán aquí al rellenar el protocolo.
-              </p>
-            </div>
-          ) : (
-            <ul className="space-y-3">
+          <p className="text-3xl font-bold" style={{ color: GOLD }}>
+            {list.length}
+          </p>
+          <p className="mt-1 text-sm text-slate-400">guardados en memoria local</p>
+        </div>
+        <div
+          className="rounded-xl border p-5"
+          style={{ backgroundColor: CARD_BG, borderColor: GOLD_DIM }}
+        >
+          <h2 className="mb-1 text-sm font-medium uppercase tracking-wide text-slate-400">
+            Unidades activas ahora
+          </h2>
+          <p className="text-3xl font-bold" style={{ color: GOLD }}>
+            {liveEntries.length}
+          </p>
+          <p className="mt-1 text-sm text-slate-400">sincronizando con Firebase</p>
+        </div>
+      </section>
+
+      {/* Panel expandido Web: 60% mapa + 40% alertas/cuadrillas */}
+      <div className="mb-8 grid gap-6 lg:grid-cols-5 lg:min-h-[70vh]">
+        {/* Mapa: 60% en escritorio */}
+        <div className="lg:col-span-3 flex flex-col min-h-[320px] lg:min-h-full">
+          <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-slate-400">
+            Ubicación en tiempo real
+          </h2>
+          <div className="flex-1 min-h-[320px] lg:min-h-0 rounded-xl border border-amber-500/30 overflow-hidden bg-slate-800/50">
+            {liveEntries.length > 0 ? (
+              <ManagerMap entries={liveEntries} className="h-full min-h-[320px] lg:min-h-[400px]" />
+            ) : (
+              <div className="flex h-full min-h-[320px] items-center justify-center text-slate-400">
+                No hay unidades con ubicación. El mapa se actualizará en tiempo real.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Lista alertas/cuadrillas: 40% en escritorio */}
+        <div className="lg:col-span-2 flex flex-col min-h-0">
+          <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-slate-400">
+            Unidades activas en la calle
+          </h2>
+          <div className="flex-1 overflow-y-auto rounded-xl border border-slate-600/50 space-y-3 pr-1" style={{ backgroundColor: CARD_BG }}>
+            {liveEntries.length === 0 ? (
+              <div className="p-8 text-center">
+                <p className="text-slate-400">
+                  No hay intervenciones activas. Las unidades aparecerán aquí al rellenar el protocolo.
+                </p>
+              </div>
+            ) : (
+              <ul className="space-y-3 p-3">
               {liveEntries.map((entry) => {
                 const updatedAt = entry.updatedAt
                   ? new Date(entry.updatedAt).toLocaleTimeString("es-ES", {
@@ -301,11 +304,13 @@ export default function ManagerPage(): React.ReactElement {
                   </li>
                 );
               })}
-            </ul>
-          )}
-        </section>
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
 
-        {/* Filtros y historial local */}
+      {/* Filtros y historial local */}
         <section className="mb-6 flex flex-wrap gap-4">
           <div className="min-w-[180px] flex-1">
             <label htmlFor="filter-unidad" className="mb-1 block text-xs font-medium text-slate-400">
@@ -417,25 +422,6 @@ export default function ManagerPage(): React.ReactElement {
             </ul>
           )}
         </section>
-      </main>
-
-      <footer
-        className="mt-12 border-t px-4 py-8 text-center"
-        style={{ borderColor: "rgba(51, 65, 85, 0.6)" }}
-      >
-        <button
-          type="button"
-          onClick={handleCerrarGestion}
-          className="inline-flex min-h-[56px] min-w-[260px] items-center justify-center rounded-xl px-8 py-4 text-base font-bold transition active:scale-[0.98]"
-          style={{
-            backgroundColor: GOLD,
-            color: BG_DARK,
-            boxShadow: "0 4px 14px rgba(234, 179, 8, 0.35)",
-          }}
-        >
-          Cerrar Gestión
-        </button>
-      </footer>
-    </div>
+    </>
   );
 }

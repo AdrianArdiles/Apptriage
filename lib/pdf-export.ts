@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { getOperadorId, getUnidadId } from "@/lib/operador-storage";
+import { getOperadorId, getUnidadId, getAtendidoPor } from "@/lib/operador-storage";
 import type { ReportSummaryData } from "@/lib/report-summary";
 
 const TITLE = "INFORME DE ATENCIÓN PREHOSPITALARIA - AMBULANCIA PRO";
@@ -60,6 +60,8 @@ export function exportToPDF(data: ReportSummaryData, options?: PDFExportOptions)
   y = sectionTitle(doc, y, "OPERADOR / GUARDIA");
   y = sectionLine(doc, y, "ID del paramédico", getOperadorId() || "—");
   y = sectionLine(doc, y, "N° de Unidad / Móvil", getUnidadId() || "—");
+  const atendidoPor = getAtendidoPor();
+  if (atendidoPor) y = sectionLine(doc, y, "Atendido por", atendidoPor);
   y += 4;
   drawSectionBorder(doc, sectionStart0, y);
   y += 10;

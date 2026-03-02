@@ -21,7 +21,8 @@ import {
 import { generateAndSharePDF } from "@/lib/share-pdf";
 import type { ReportSummaryData } from "@/lib/report-summary";
 import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
-import { getOperadorId, getUnidadId } from "@/lib/operador-storage";
+import { pushAtencionToFirebase } from "@/lib/firebase-atenciones";
+import { getOperadorId, getUnidadId, getAtendidoPor } from "@/lib/operador-storage";
 import { syncIntervencionToFirebase } from "@/lib/firebase-intervenciones";
 import { hapticImpactMedium } from "@/lib/haptics";
 import { ToastTimestamp } from "@/components/toast-timestamp";
@@ -89,6 +90,8 @@ function formatHora(date: Date): string {
 export interface ChecklistXABCDEProps {
   onSubmit: (data: DatosEvaluacionInicial) => void;
   isSubmitting?: boolean;
+  /** Llamado después de generar y guardar el PDF; el padre puede limpiar Firebase y formulario. */
+  onNuevaAtencion?: () => void;
 }
 
 const CARD_BG = "#1e293b";
@@ -107,7 +110,7 @@ const BTN_GRADIENT_STYLE = {
   boxShadow: "0 0 20px rgba(37, 99, 235, 0.4), 0 4px 12px rgba(0,0,0,0.3)",
 };
 
-export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXABCDEProps): React.ReactElement {
+export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEProps): React.ReactElement {
   const [horaInicio, setHoraInicio] = React.useState<string>("");
   const [inicioRegistrado, setInicioRegistrado] = React.useState(false);
   const [pacienteId, setPacienteId] = React.useState("");
@@ -136,6 +139,8 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
   const [timestampInput, setTimestampInput] = React.useState("");
   const [currentStep, setCurrentStep] = React.useState(0);
   const [pdfLoading, setPdfLoading] = React.useState(false);
+  const [pdfListo, setPdfListo] = React.useState(false);
+  const [syncError, setSyncError] = React.useState(false);
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
   const [pulseButtonKey, setPulseButtonKey] = React.useState<string | null>(null);
   const [lastAddedHora, setLastAddedHora] = React.useState<string | null>(null);
@@ -143,6 +148,41 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
   const persistRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const TOTAL_STEPS = 12;
+
+  const resetForm = React.useCallback(() => {
+    setHoraInicio("");
+    setInicioRegistrado(false);
+    setPacienteId("");
+    setNombrePaciente("");
+    setDni("");
+    setSintomasTexto("");
+    setXabcde({ X: "pendiente", A: "pendiente", B: "pendiente", C: "pendiente", D: "pendiente", E: "pendiente" });
+    setBloodLoss("");
+    setAirwayStatus("");
+    setRespirationRate("");
+    setPulse("");
+    setBpSystolic("");
+    setBpDiastolic("");
+    setSaturacionOxigeno("");
+    setGlasgowE(0);
+    setGlasgowV(0);
+    setGlasgowM(0);
+    setTimestampEventos([]);
+    setTimestampInput("");
+    setCurrentStep(0);
+    setPdfLoading(false);
+    setPdfListo(false);
+    setSyncError(false);
+    setToastMessage(null);
+    setLastAddedHora(null);
+  }, []);
+
+  const handleNuevaAtencionClick = React.useCallback(() => {
+    resetForm();
+    setCurrentStep(0);
+    onNuevaAtencion?.();
+  }, [resetForm, onNuevaAtencion]);
+
   const STEP_LABELS: { letra?: string; titulo: string }[] = [
     { titulo: "Inicio" },
     { letra: "X", titulo: "eXanguinación" },
@@ -243,27 +283,27 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
   const puntajeGlasgow = glasgowE + glasgowV + glasgowM;
 
   React.useEffect(() => {
-    const t = setTimeout(() => {
-      const operadorId = getOperadorId() || "";
-      const unidadId = getUnidadId() || "";
-      if (!operadorId && !unidadId) return;
-      syncIntervencionToFirebase({
-        operadorId,
-        unidadId,
-        updatedAt: new Date().toISOString(),
-        currentStep,
-        paciente_id: pacienteId.trim() || undefined,
-        nombre_paciente: nombrePaciente.trim() || undefined,
-        dni: dni.trim() || undefined,
-        sintomas_texto: sintomasTexto.trim() || undefined,
-        xabcde: xabcde as Record<string, string>,
-        hora_inicio_atencion: horaInicio || undefined,
-        timestamp_eventos:
-          timestampEventos.length > 0 ? timestampEventos : undefined,
-        glasgow_score: puntajeGlasgow > 0 ? puntajeGlasgow : undefined,
-        hasRCP,
-      });
-    }, 500);
+    const operadorId = getOperadorId() || "";
+    const unidadId = getUnidadId() || "";
+    if (!operadorId && !unidadId) return;
+    const datos = {
+      operadorId,
+      unidadId,
+      updatedAt: new Date().toISOString(),
+      currentStep,
+      paciente_id: pacienteId.trim() || undefined,
+      nombre_paciente: nombrePaciente.trim() || undefined,
+      dni: dni.trim() || undefined,
+      sintomas_texto: sintomasTexto.trim() || undefined,
+      xabcde: xabcde as Record<string, string>,
+      hora_inicio_atencion: horaInicio || undefined,
+      timestamp_eventos:
+        timestampEventos.length > 0 ? timestampEventos : undefined,
+      glasgow_score: puntajeGlasgow > 0 ? puntajeGlasgow : undefined,
+      hasRCP,
+      atendido_por: getAtendidoPor() || undefined,
+    };
+    const t = setTimeout(() => syncIntervencionToFirebase(datos).catch(() => {}), 100);
     return () => clearTimeout(t);
   }, [
     currentStep,
@@ -328,6 +368,7 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (currentStep === TOTAL_STEPS - 1) return;
     const signos: SignosVitales = {};
     if (pulse) signos.frecuenciaCardiaca = Number(pulse);
     if (saturacionOxigeno) signos.saturacionOxigeno = Number(saturacionOxigeno);
@@ -397,12 +438,54 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
     };
   };
 
-  const handleGeneratePDF = async () => {
+  /** Flujo ENVIAR A CENTRAL: 1) update Firebase (opcional), 2) siempre generar PDF. PDF independiente de Firebase. */
+  const handleEnviarACentral = async () => {
+    setSyncError(false);
     setPdfLoading(true);
+    const operadorId = getOperadorId() || "";
+    const unidadId = getUnidadId() || "";
+    const payloadFirebase = {
+      operadorId,
+      unidadId,
+      updatedAt: new Date().toISOString(),
+      currentStep: TOTAL_STEPS - 1,
+      paciente_id: pacienteId.trim() || undefined,
+      nombre_paciente: nombrePaciente.trim() || undefined,
+      dni: dni.trim() || undefined,
+      sintomas_texto: sintomasTexto.trim() || undefined,
+      xabcde: xabcde as Record<string, string>,
+      hora_inicio_atencion: horaInicio || undefined,
+      timestamp_eventos: timestampEventos.length > 0 ? timestampEventos : undefined,
+      glasgow_score: puntajeGlasgow > 0 ? puntajeGlasgow : undefined,
+      hasRCP,
+      atendido_por: getAtendidoPor() || undefined,
+    };
+    if (operadorId || unidadId) {
+      try {
+        await syncIntervencionToFirebase(payloadFirebase);
+      } catch {
+        setSyncError(true);
+        setToastMessage("Guardado localmente. Error de sincronización");
+      }
+    }
     const data = buildReportSummaryData();
     try {
-      await generateAndSharePDF(data);
-      addToHistorialPdf(data, { operadorId: getOperadorId() || undefined, unidadId: getUnidadId() || undefined });
+      const { fileUri } = await generateAndSharePDF(data);
+      const entry = addToHistorialPdf(data, {
+        operadorId: operadorId || undefined,
+        unidadId: unidadId || undefined,
+        fileUri,
+      });
+      pushAtencionToFirebase({
+        id: entry.id,
+        createdAt: entry.createdAt,
+        nombrePaciente: entry.nombrePaciente,
+        pacienteId: entry.pacienteId,
+        operadorId: entry.operadorId,
+        unidadId: entry.unidadId,
+        data: entry.data,
+      });
+      setPdfListo(true);
     } catch (e) {
       console.error("Error al generar/compartir PDF:", e);
       alert("No se pudo generar o compartir el PDF. Compruebe los permisos o use la descarga.");
@@ -570,6 +653,27 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
           </Card>
         );
       case 11: {
+        if (pdfListo) {
+          return (
+            <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg text-slate-100">Reporte finalizado</CardTitle>
+                <p className="text-sm text-slate-400">PDF generado y guardado en el dispositivo.</p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-slate-300 text-sm">Puede verlo y compartirlo desde Historial.</p>
+                <Button
+                  type="button"
+                  onClick={handleNuevaAtencionClick}
+                  className={`mt-4 w-full min-h-[56px] text-lg ${BTN_GRADIENT} disabled:opacity-70`}
+                  style={BTN_GRADIENT_STYLE}
+                >
+                  NUEVA ATENCIÓN
+                </Button>
+              </CardContent>
+            </Card>
+          );
+        }
         const faltantes: string[] = [];
         if (!horaInicio?.trim()) faltantes.push("Hora de inicio de atención");
         if (!pacienteId?.trim()) faltantes.push("ID / Nº historia del paciente");
@@ -579,11 +683,16 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
             <CardHeader className="pb-2">
-              <CardTitle className="text-lg text-slate-100">Enviar reporte</CardTitle>
-              <p className="text-sm text-slate-400">Revise los datos y envíe a central.</p>
+              <CardTitle className="text-lg text-slate-100">Enviar a central</CardTitle>
+              <p className="text-sm text-slate-400">Se sincronizará el estado con central y se generará el PDF localmente.</p>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="space-y-4">
               <p className="text-slate-300 text-sm">Paciente: {pacienteId || "—"} · Inicio: {horaInicio ? new Date(horaInicio).toLocaleTimeString("es-ES") : "—"}</p>
+              {syncError && (
+                <div className="rounded-lg border border-amber-500/70 bg-amber-500/15 px-3 py-2 text-sm text-amber-200">
+                  Guardado localmente. Error de sincronización con la nube. El PDF se genera igual.
+                </div>
+              )}
               {faltantes.length > 0 && (
                 <div className="rounded-lg border border-amber-500/70 bg-amber-500/15 px-3 py-2 text-sm text-amber-200">
                   <p className="font-medium text-amber-100">Faltan datos críticos (recomendado rellenar antes de enviar):</p>
@@ -596,12 +705,12 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
               )}
               <Button
                 type="button"
-                onClick={handleGeneratePDF}
+                onClick={handleEnviarACentral}
                 disabled={pdfLoading}
-                className={`mt-4 w-full ${BTN_GRADIENT} disabled:opacity-70`}
+                className={`mt-4 w-full min-h-[56px] text-lg ${BTN_GRADIENT} disabled:opacity-70`}
                 style={BTN_GRADIENT_STYLE}
               >
-                {pdfLoading ? "Generando…" : "GENERAR Y COMPARTIR PDF"}
+                {pdfLoading ? "Generando PDF…" : "ENVIAR A CENTRAL / FINALIZAR"}
               </Button>
             </CardContent>
           </Card>
@@ -670,14 +779,24 @@ export function ChecklistXABCDE({ onSubmit, isSubmitting = false }: ChecklistXAB
           >
             SIGUIENTE
           </Button>
+        ) : pdfListo ? (
+          <Button
+            type="button"
+            onClick={handleNuevaAtencionClick}
+            className={`min-h-[56px] flex-1 rounded-xl text-lg font-semibold text-white ${BTN_GRADIENT}`}
+            style={BTN_GRADIENT_STYLE}
+          >
+            NUEVA ATENCIÓN
+          </Button>
         ) : (
           <Button
-            type="submit"
-            className={`flex-1 rounded-xl text-white ${BTN_GRADIENT}`}
+            type="button"
+            onClick={handleEnviarACentral}
+            disabled={pdfLoading}
+            className={`min-h-[56px] flex-1 rounded-xl text-lg font-semibold text-white ${BTN_GRADIENT} disabled:opacity-70`}
             style={BTN_GRADIENT_STYLE}
-            disabled={isSubmitting}
           >
-            {isSubmitting ? "Enviando…" : "Enviar a central"}
+            {pdfLoading ? "Generando PDF…" : "ENVIAR A CENTRAL / FINALIZAR"}
           </Button>
         )}
       </div>

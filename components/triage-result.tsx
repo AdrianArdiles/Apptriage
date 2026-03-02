@@ -13,7 +13,25 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { clearFichaClinica } from "@/lib/ficha-clinica-storage";
+import { getOperadorId, getUnidadId } from "@/lib/operador-storage";
+import { syncIntervencionToFirebase, removeIntervencionFromFirebase } from "@/lib/firebase-intervenciones";
+import {
+  savePendingFirebaseSync,
+  clearPendingFirebaseSync,
+  registroToReportSummaryData,
+  buildIntervencionPayloadFromRegistro,
+} from "@/lib/registro-to-finalize";
+import { generateAndSharePDF } from "@/lib/share-pdf";
+import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
+import { pushAtencionToFirebase } from "@/lib/firebase-atenciones";
 import type { NivelGravedad, NivelTriageNombre, RegistroTriage } from "@/lib/types";
+
+const RED_EMERGENCY = "#dc2626";
+const BLUE_MEDICAL = "#2563eb";
+const BTN_FINALIZAR_STYLE: React.CSSProperties = {
+  background: `linear-gradient(135deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)`,
+  boxShadow: "0 0 20px rgba(37, 99, 235, 0.4), 0 4px 12px rgba(0,0,0,0.3)",
+};
 
 const DISCLAIMER_LEGAL =
   "Este es un análisis automatizado preliminar y no sustituye la evaluación de un profesional médico. En caso de emergencia, contacte al servicio local de urgencias.";
@@ -51,8 +69,58 @@ export interface TriageResultProps {
 
 export function TriageResult({ registro, onNuevoTriage, darkMode = true }: TriageResultProps): React.ReactElement {
   const [openConfirmNuevoPaciente, setOpenConfirmNuevoPaciente] = React.useState(false);
+  const [guardadoExitoso, setGuardadoExitoso] = React.useState(false);
+  const [finalizando, setFinalizando] = React.useState(false);
+  const [mensajeExito, setMensajeExito] = React.useState<string | null>(null);
+
+  const handleFinalizarYEnviar = React.useCallback(async () => {
+    setFinalizando(true);
+    const operadorId = getOperadorId() || "";
+    const unidadId = getUnidadId() || "";
+    const payload = buildIntervencionPayloadFromRegistro(registro, operadorId, unidadId);
+
+    try {
+      if (operadorId || unidadId) {
+        try {
+          await syncIntervencionToFirebase(payload);
+          clearPendingFirebaseSync();
+        } catch {
+          savePendingFirebaseSync(payload);
+        }
+      }
+    } catch {
+      if (operadorId || unidadId) savePendingFirebaseSync(payload);
+    }
+
+    const data = registroToReportSummaryData(registro);
+    try {
+      const { fileUri } = await generateAndSharePDF(data);
+      const entry = addToHistorialPdf(data, {
+        operadorId: operadorId || undefined,
+        unidadId: unidadId || undefined,
+        fileUri,
+      });
+      pushAtencionToFirebase({
+        id: entry.id,
+        createdAt: entry.createdAt,
+        nombrePaciente: entry.nombrePaciente,
+        pacienteId: entry.pacienteId,
+        operadorId: entry.operadorId,
+        unidadId: entry.unidadId,
+        data: entry.data,
+      });
+      setMensajeExito("Reporte Guardado Exitosamente");
+      setGuardadoExitoso(true);
+    } catch (e) {
+      console.error("Error al generar PDF:", e);
+      alert("No se pudo generar o compartir el PDF. Compruebe los permisos.");
+    } finally {
+      setFinalizando(false);
+    }
+  }, [registro]);
 
   const handleConfirmNuevoPaciente = () => {
+    removeIntervencionFromFirebase(getUnidadId() || getOperadorId() || "");
     clearFichaClinica();
     setOpenConfirmNuevoPaciente(false);
     onNuevoTriage?.();
@@ -86,7 +154,6 @@ export function TriageResult({ registro, onNuevoTriage, darkMode = true }: Triag
   const boxClass = darkMode ? "rounded-lg border border-zinc-600 bg-zinc-700/40 p-4" : "rounded-lg border border-slate-200 bg-slate-50/50 p-4";
   const boxSky = darkMode ? "rounded-xl border border-zinc-600 bg-zinc-700/40 p-4" : "rounded-xl border border-sky-200 bg-sky-50/50 p-4";
   const disclaimerClass = darkMode ? "text-zinc-500" : "text-gray-500";
-  const linkClass = darkMode ? "text-emerald-400 hover:underline" : "text-[var(--medical-slate-blue)] hover:underline";
 
   return (
     <div className="space-y-6">
@@ -216,21 +283,32 @@ export function TriageResult({ registro, onNuevoTriage, darkMode = true }: Triag
           <p className={`text-xs ${darkMode ? "text-zinc-500" : "text-slate-400"}`}>
             Fecha y hora: {new Date(registro.fecha).toLocaleString("es")}
           </p>
-          <div className="flex flex-wrap gap-3 pt-2">
-            {onNuevoTriage && (
-              <>
-                <button type="button" onClick={onNuevoTriage} className={`text-sm font-medium ${linkClass}`}>
-                  Realizar otra ficha / triaje
-                </button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setOpenConfirmNuevoPaciente(true)}
-                  className={darkMode ? "min-h-[44px] border-zinc-600 bg-zinc-700 text-zinc-100 hover:bg-zinc-600" : ""}
-                >
-                  Nuevo Paciente
-                </Button>
-              </>
+          <div className="flex flex-col gap-4 pt-4">
+            {!guardadoExitoso && onNuevoTriage && (
+              <Button
+                type="button"
+                onClick={handleFinalizarYEnviar}
+                disabled={finalizando}
+                className="min-h-[56px] w-full rounded-xl text-lg font-semibold text-white transition active:scale-[0.98] disabled:opacity-70"
+                style={BTN_FINALIZAR_STYLE}
+              >
+                {finalizando ? "Guardando y generando PDF…" : "FINALIZAR Y ENVIAR A CENTRAL"}
+              </Button>
+            )}
+            {mensajeExito && (
+              <p className="rounded-xl border border-emerald-600/50 bg-emerald-900/30 px-4 py-3 text-center font-medium text-emerald-200">
+                {mensajeExito}
+              </p>
+            )}
+            {guardadoExitoso && onNuevoTriage && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setOpenConfirmNuevoPaciente(true)}
+                className={darkMode ? "min-h-[52px] border-zinc-600 bg-zinc-700 text-zinc-100 hover:bg-zinc-600" : ""}
+              >
+                Nuevo Paciente
+              </Button>
             )}
           </div>
         </CardContent>

@@ -15,12 +15,15 @@ import { clearFichaClinica } from "@/lib/ficha-clinica-storage";
 import { getOperadorId, getUnidadId } from "@/lib/operador-storage";
 import { hapticCancelWarning } from "@/lib/haptics";
 import { removeIntervencionFromFirebase } from "@/lib/firebase-intervenciones";
+import { pushHistorialTriage } from "@/lib/firebase-historial";
 import {
   subscribeMensajes,
   markAsRead,
   type MensajePayload,
 } from "@/lib/firebase-mensajes";
 import { playNotificationSound } from "@/lib/notification-sound";
+import { useGpsSync } from "@/lib/use-gps-sync";
+import { useAuth } from "@/lib/auth-context";
 import type { RegistroTriage } from "@/lib/types";
 import {
   Dialog,
@@ -35,8 +38,6 @@ const BG_DARK = "#0f172a";
 const CARD_BG = "#1e293b";
 const BLUE_MEDICAL = "#2563eb";
 const RED_EMERGENCY = "#dc2626";
-const ORANGE_WARNING = "#ea580c";
-const ORANGE_BG = "rgba(234, 88, 12, 0.95)";
 
 function toPayloadTriage(data: DatosEvaluacionInicial): PayloadTriage {
   const payload: PayloadTriage = {
@@ -62,10 +63,17 @@ function toPayloadTriage(data: DatosEvaluacionInicial): PayloadTriage {
   return payload;
 }
 
-function AtencionContent(): React.ReactElement {
+function AtencionContent(): React.ReactElement | null {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user, loading: authLoading } = useAuth();
   const [resultado, setResultado] = React.useState<RegistroTriage | null>(null);
+
+  React.useEffect(() => {
+    if (authLoading) return;
+    if (!user) router.replace("/");
+  }, [user, authLoading, router]);
+
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [respuestaPendienteConfirmacion, setRespuestaPendienteConfirmacion] =
@@ -78,9 +86,21 @@ function AtencionContent(): React.ReactElement {
   const [mounted, setMounted] = React.useState(false);
   const [mensajeManager, setMensajeManager] = React.useState<MensajePayload | null>(null);
   const [movilId, setMovilId] = React.useState("");
+  const [resetKey, setResetKey] = React.useState(0);
   const lastSentAtRef = React.useRef<string | null>(null);
 
   const refreshPendingCount = React.useCallback(() => setPendingCount(getReportQueue().length), []);
+
+  const handleResetAll = React.useCallback(() => {
+    clearFichaClinica();
+    removeIntervencionFromFirebase(getUnidadId() || getOperadorId() || "");
+    setResultado(null);
+    setError(null);
+    setRespuestaPendienteConfirmacion(null);
+    setModalConfirmacionOpen(false);
+    setResetKey((k) => k + 1);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
 
   React.useEffect(() => {
     if (mounted) setMovilId(getUnidadId() || getOperadorId() || "");
@@ -98,6 +118,8 @@ function AtencionContent(): React.ReactElement {
     });
     return unsub;
   }, [movilId]);
+
+  useGpsSync(movilId, !!movilId.trim() && !resultado);
 
   const handleMensajeRecibido = React.useCallback(() => {
     if (movilId.trim()) markAsRead(movilId);
@@ -149,9 +171,13 @@ function AtencionContent(): React.ReactElement {
       }
       const { status, data: resData } = await postTriage(formData);
       if (status >= 200 && status < 300) {
-        removeIntervencionFromFirebase(getUnidadId() || getOperadorId() || "");
         const payload = resData as { success?: boolean; registro?: RegistroTriage };
-        setResultado(payload.registro ?? (resData as RegistroTriage));
+        const registro = payload.registro ?? (resData as RegistroTriage);
+        setResultado(registro);
+        pushHistorialTriage(registro, {
+          operadorId: getOperadorId() || undefined,
+          unidadId: getUnidadId() || undefined,
+        });
       } else {
         const errMsg = typeof resData === "object" && resData !== null && "error" in resData
           ? String((resData as { error: unknown }).error)
@@ -197,6 +223,8 @@ function AtencionContent(): React.ReactElement {
     router.push("/");
   }, [router]);
 
+  if (!authLoading && !user) return null;
+
   return (
     <div
       className={`min-h-screen font-sans text-slate-100 transition-all duration-300 ${
@@ -222,7 +250,7 @@ function AtencionContent(): React.ReactElement {
             </div>
           </div>
           <nav className="flex items-center gap-2">
-            <Link href="/" className="text-sm font-medium text-slate-400 hover:text-slate-100">Inicio</Link>
+            <Link href="/?from=nav" className="text-sm font-medium text-slate-400 hover:text-slate-100">Inicio</Link>
             <Link href="/historial" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-sm font-medium text-slate-300 hover:text-slate-100 hover:underline active:opacity-80">
               Historial
             </Link>
@@ -308,7 +336,12 @@ function AtencionContent(): React.ReactElement {
                 <SpinnerMedico label="Enviando reporte a central…" />
               </div>
             )}
-            <ChecklistXABCDE onSubmit={handleSubmit} isSubmitting={isSubmitting} />
+            <ChecklistXABCDE
+              key={resetKey}
+              onSubmit={handleSubmit}
+              isSubmitting={isSubmitting}
+              onNuevaAtencion={handleResetAll}
+            />
           </div>
         )}
 

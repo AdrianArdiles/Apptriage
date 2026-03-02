@@ -1,6 +1,8 @@
-# Triage Médico
+# Ambulancia Pro (Triage Médico)
 
-Aplicación de triaje médico con Next.js, Tailwind CSS y componentes tipo Shadcn UI.
+Aplicación de atención prehospitalaria y gestión de emergencias: formulario XABCDE, triaje, informes PDF, panel de gestión en tiempo real (mapa, mensajería, estadísticas, doctor, exportación). Next.js, Firebase y Capacitor (Android).
+
+**Documentación completa:** [docs/DOCUMENTACION.md](docs/DOCUMENTACION.md) — enfoque **funcional** (flujos, usuarios, pantallas) y **técnico** (stack, estructura, Firebase, build Android/Web).
 
 ## Requisitos
 

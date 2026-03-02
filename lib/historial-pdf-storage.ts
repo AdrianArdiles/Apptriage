@@ -10,6 +10,8 @@ export interface HistorialPdfEntry {
   pacienteId: string;
   operadorId?: string;
   unidadId?: string;
+  /** Ruta completa (URI) del PDF en el dispositivo (Capacitor). Para abrir con visor nativo. */
+  fileUri?: string;
   data: ReportSummaryData;
 }
 
@@ -40,26 +42,29 @@ export function getHistorialPdfList(): HistorialPdfEntry[] {
   return list.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
-/** Añade un informe al historial local (se llama tras generar/compartir PDF). */
+/** Añade un informe al historial local (se llama tras generar/compartir PDF). Devuelve la entrada creada para poder guardarla en Firebase. */
 export function addToHistorialPdf(
   data: ReportSummaryData,
-  options?: { operadorId?: string; unidadId?: string }
-): void {
+  options?: { operadorId?: string; unidadId?: string; fileUri?: string }
+): HistorialPdfEntry {
   const list = getRaw();
   const id = `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const nombrePaciente = (data.nombre_paciente ?? "").trim() || "Sin nombre";
   const pacienteId = (data.paciente_id ?? "").trim() || "sin-id";
-  list.unshift({
+  const entry: HistorialPdfEntry = {
     id,
     createdAt: new Date().toISOString(),
     nombrePaciente,
     pacienteId,
     operadorId: options?.operadorId,
     unidadId: options?.unidadId,
+    fileUri: options?.fileUri,
     data,
-  });
+  };
+  list.unshift(entry);
   const trimmed = list.slice(0, MAX_ENTRIES);
   save(trimmed);
+  return entry;
 }
 
 /** Elimina un informe del historial por id. */
