@@ -2,7 +2,7 @@
 
 import { collection, addDoc } from "firebase/firestore";
 import { getFirestoreInstance } from "@/lib/firebase";
-import { cleanFirestoreObject } from "@/lib/clean-object";
+import { cleanObject, cleanFirestoreObject } from "@/lib/clean-object";
 import type { ReportSummaryData } from "@/lib/report-summary";
 
 export const FIRESTORE_ATENCIONES_COLLECTION = "atenciones";

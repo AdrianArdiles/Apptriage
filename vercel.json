@@ -1,0 +1,5 @@
+{
+  "buildCommand": "DATABASE_URL=\"file:./prisma/dev.db\" BUILD_WEB=1 prisma generate && BUILD_WEB=1 next build",
+  "framework": "nextjs",
+  "installCommand": "npm install --legacy-peer-deps"
+}

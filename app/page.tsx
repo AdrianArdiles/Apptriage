@@ -147,6 +147,10 @@ function LandingPage(): React.ReactElement {
         setRegistroMode(false);
         setLoginError("Ya tenés una cuenta. Iniciá sesión con tu correo y contraseña.");
         if (typeof alert === "function") alert("Este correo ya está registrado, por favor inicia sesión.");
+      } else if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
+        const hint = "Si este correo lo usaste con Google, entrá con «Continuar con Google». Si no tenés cuenta, creá una con «Registrarse».";
+        setLoginError(`${msg} ${hint}`);
+        if (typeof alert === "function") alert(msg + "\n\n" + hint);
       } else {
         setLoginError(msg);
         if (typeof alert === "function") alert(msg);
@@ -196,14 +200,14 @@ function LandingPage(): React.ReactElement {
     );
   }
 
-  // No autorizado: mensaje claro y botón (evita pantalla en blanco si falla la redirección)
+  // No autorizado o error al verificar: mensaje claro y botón
   if (isUnauthorized && user) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-6 font-sans text-slate-100" style={{ backgroundColor: BG_DARK }}>
         <div className="flex max-w-md flex-col items-center rounded-2xl border border-red-500/40 bg-slate-800/50 p-8 shadow-xl">
-          <h1 className="mb-2 text-center text-xl font-bold text-red-200">Usuario no autorizado</h1>
+          <h1 className="mb-2 text-center text-xl font-bold text-red-200">No se pudo completar el acceso</h1>
           <p className="mb-6 text-center text-sm text-slate-400">
-            Su correo no está en la lista de usuarios autorizados.
+            {contextAuthError || "Su correo no está en la lista de usuarios autorizados o hubo un error de conexión. Comprobá que la app esté en los dominios autorizados de Firebase (Authentication → Configuración)."}
           </p>
           <button
             type="button"
@@ -343,6 +347,9 @@ function LandingPage(): React.ReactElement {
                 >
                   Volver a Google
                 </button>
+                <p className="mt-2 text-center text-xs text-slate-500">
+                  Si tu cuenta se creó con Gmail, entrá con «Continuar con Google» arriba.
+                </p>
               </form>
             )}
           </div>

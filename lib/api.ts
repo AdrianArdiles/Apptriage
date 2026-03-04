@@ -1,10 +1,15 @@
 import { Capacitor } from "@capacitor/core";
 import { CapacitorHttp } from "@capacitor/core";
 
-export const API_BASE_URL = "https://apptriage.vercel.app";
+/** Base URL de la API (Vercel). Para migrar a Firebase: NEXT_PUBLIC_API_URL en build. */
+const API_BASE_URL =
+  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_URL) ||
+  "https://apptriage.vercel.app";
 
-/** URL absoluta sin barra final. */
-export const TRIAGE_API_URL = "https://apptriage.vercel.app/api/triage";
+export { API_BASE_URL };
+
+/** URL absoluta del endpoint de triaje (POST). */
+export const TRIAGE_API_URL = `${API_BASE_URL}/api/triage`;
 
 export function apiUrl(path: string): string {
   const normalized = path.startsWith("/") ? path : `/${path}`;

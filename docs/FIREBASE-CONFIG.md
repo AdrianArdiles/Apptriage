@@ -38,7 +38,20 @@ En la consola: **Configuración del proyecto → Apps para Android → Ambulanci
 
 Mientras la SHA-1 del build que estás usando no esté en Firebase, Google Sign-In puede fallar o dar NPE en nativo. **Esto solo se configura en la consola**, no desde el código.
 
-### 2. Reglas más estrictas (opcional)
+### 2. Dominios autorizados (crítico para web)
+
+Si la **autenticación falla en la versión web** (Google o email) con un error genérico o “no se pudo verificar la autorización”, casi siempre es porque la **URL desde la que abrís la app no está en la lista de dominios autorizados** de Firebase.
+
+- En Firebase Console: **Authentication → Configuración (o Settings) → Dominios autorizados**.
+- Agregá **cada URL** desde la que usás la app, por ejemplo:
+  - `localhost` (para desarrollo)
+  - `tu-proyecto.vercel.app` (si la web está en Vercel)
+  - `ambulanciapro.web.app` y `ambulanciapro.firebaseapp.com` (si usás Firebase Hosting)
+  - Cualquier dominio propio (ej. `app.tudominio.com`).
+
+Sin el dominio en esa lista, Firebase bloquea el inicio de sesión (sobre todo con Google). Los proveedores “Correo/contraseña” y “Google” pueden estar habilitados y aun así fallar si el dominio no está autorizado.
+
+### 3. Reglas más estrictas (opcional)
 
 Hoy tenés “cualquier usuario autenticado puede leer/escribir todo”. Para producción podés restringir después, por ejemplo:
 
@@ -47,7 +60,7 @@ Hoy tenés “cualquier usuario autenticado puede leer/escribir todo”. Para pr
 
 No es obligatorio para que la app opere; es una mejora de seguridad para más adelante.
 
-### 3. google-services.json actualizado
+### 4. google-services.json actualizado
 
 Si en Firebase agregás o cambiás una app Android, o las SHA-1, volvé a descargar **google-services.json** desde la misma pantalla de la app Android y reemplazá el archivo en `android/app/google-services.json`.
 

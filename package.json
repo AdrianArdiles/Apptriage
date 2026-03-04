@@ -16,6 +16,7 @@
     "build:web": "cross-env BUILD_WEB=1 prisma generate && next build",
     "build:hosting": "prisma generate && next build",
     "deploy:hosting": "npm run build:hosting && firebase deploy --only hosting",
+    "deploy:vercel": "npx vercel --prod",
     "start": "next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
