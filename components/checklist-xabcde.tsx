@@ -23,7 +23,7 @@ import { DiagnosticoAutocomplete } from "@/components/diagnostico-autocomplete";
 import { generateAndSharePDFSafe, generateAndDownloadPDF, canUseShare } from "@/lib/share-pdf";
 import type { ReportSummaryData } from "@/lib/report-summary";
 import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
-import { getAuthInstance } from "@/lib/firebase";
+import { getAuthInstance, getFirestoreInstance } from "@/lib/firebase";
 import { pushAtencionToFirebase } from "@/lib/firebase-atenciones";
 import { pushAtencionToFirestore } from "@/lib/firestore-atenciones";
 import { sanitizeFirestoreData } from "@/lib/clean-object";
@@ -472,7 +472,10 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
     return `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   }, []);
 
-  /** Flujo FINALIZAR ATENCIÓN: A) cleanData = sanitizeFirestoreData(entry) B) addDoc atenciones C) Solo si B ok → PDF D) Si B falla → alert con mensaje exacto. */
+  /** Timeout para no quedar colgado en "Enviando..." si Firestore no responde. */
+  const FIRESTORE_TIMEOUT_MS = 22000;
+
+  /** Flujo FINALIZAR ATENCIÓN: A) cleanData B) addDoc con timeout C) PDF D) Si falla → alert. */
   const handleFinalizarAtencion = async () => {
     setSyncError(false);
     setFinalizando(true);
@@ -482,6 +485,14 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
       setFinalizando(false);
       setToastMessage("Debe iniciar sesión de nuevo para guardar.");
       if (typeof alert === "function") alert("Sesión expirada. Debe re-autenticarse para guardar.");
+      return;
+    }
+    const fs = getFirestoreInstance();
+    if (!fs) {
+      setFinalizando(false);
+      setSyncError(true);
+      setToastMessage("Firestore no disponible. Revisá la conexión.");
+      if (typeof alert === "function") alert("No se pudo conectar con la base de datos. Revisá tu conexión e intentá de nuevo.");
       return;
     }
     const operadorId = getOperadorId() || "";
@@ -502,24 +513,30 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
     };
     const paramedicoNombre = getAtendidoPor() || operadorId || "Paramédico";
 
-    // Paso A: sanitizar para que Firestore no reciba undefined (p. ej. data.sintomas_texto)
     const cleanData = sanitizeFirestoreData(entry);
+    const savePromise = pushAtencionToFirestore(cleanData as typeof entry, {
+      paramedicoNombre,
+      paramedicoEmail: (userEmail ?? "").trim() || undefined,
+    });
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("TIMEOUT")), FIRESTORE_TIMEOUT_MS)
+    );
     try {
-      await pushAtencionToFirestore(cleanData as typeof entry, {
-        paramedicoNombre,
-        paramedicoEmail: (userEmail ?? "").trim() || undefined,
-      });
+      await Promise.race([savePromise, timeoutPromise]);
     } catch (e) {
       setFinalizando(false);
       setSyncError(true);
-      const code = e && typeof e === "object" && "code" in e ? String((e as { code: string }).code) : "";
-      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: string }).message) : (e instanceof Error ? e.message : String(e));
-      const userMsg =
-        code === "permission-denied"
+      const msg = e instanceof Error ? e.message : String(e);
+      const isTimeout = msg === "TIMEOUT";
+      const code = !isTimeout && e && typeof e === "object" && "code" in e ? String((e as { code: string }).code) : "";
+      const fullMsg = !isTimeout && e && typeof e === "object" && "message" in e ? String((e as { message: string }).message) : msg;
+      const userMsg = isTimeout
+        ? "La conexión tardó demasiado. Revisá la red (Wi‑Fi o datos) e intentá de nuevo."
+        : code === "permission-denied"
           ? "Permisos denegados. Revisá las reglas de Firestore."
           : code === "invalid-argument" || code === "invalid-argument-error"
             ? "Datos inválidos. Revisá que no haya campos vacíos o mal formados."
-            : msg;
+            : fullMsg;
       setToastMessage("Error de Firebase: " + userMsg);
       if (typeof alert === "function") alert("Error de Firebase: " + userMsg);
       return;
@@ -562,6 +579,9 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
       else handleNuevaAtencionClick();
     } catch (pdfErr) {
       setToastMessage("Guardado OK. Error al generar PDF: " + (pdfErr instanceof Error ? pdfErr.message : String(pdfErr)));
+      if (typeof alert === "function") alert("Atención guardada en la base de datos. No se pudo generar el PDF.");
+      if (onFinalizarSuccess) onFinalizarSuccess();
+      else handleNuevaAtencionClick();
     } finally {
       setFinalizando(false);
     }

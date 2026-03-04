@@ -1,8 +1,7 @@
 "use client";
 
-import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
+import { collection, getDocs, query, where } from "firebase/firestore";
 import { getFirestoreInstance } from "@/lib/firebase";
-import { FIRESTORE_USERS_COLLECTION } from "@/lib/firestore-users";
 
 export const AUTHORIZED_USERS_COLLECTION = "authorized_users";
 
@@ -71,30 +70,20 @@ export async function getAuthorizedUserByEmail(email: string): Promise<Authorize
 }
 
 /**
- * Obtiene el usuario autorizado: primero por email en authorized_users; si no hay resultado,
- * comprueba si existe documento en users/{uid} (creado al iniciar sesión). Si existe, permite
- * entrar como PARAMEDICO con nombre por defecto. Así cualquier usuario autenticado que tenga
- * ficha en users puede operar la app.
+ * Obtiene el usuario autorizado: primero por email en authorized_users (o ADMIN hardcoded).
+ * Si no está en la lista, permite entrar igual como PARAMEDICO a cualquier usuario autenticado
+ * (tenemos email + uid = Firebase Auth válida). Así no dependemos de que exista el doc en users
+ * ni de que la colección authorized_users esté poblada.
  */
 export async function getAuthorizedUserByEmailOrUserDoc(email: string, uid: string): Promise<AuthorizedUser | null> {
   const fromList = await getAuthorizedUserByEmail(email);
   if (fromList) return fromList;
 
-  const fs = getFirestoreInstance();
-  if (!fs || !uid?.trim()) return null;
-  try {
-    const userRef = doc(fs, FIRESTORE_USERS_COLLECTION, uid);
-    const snap = await getDoc(userRef);
-    if (snap.exists()) {
-      return {
-        email: (email ?? "").trim().toLowerCase(),
-        rol: "PARAMEDICO",
-        nombre: "Operador",
-        matricula: "",
-      };
-    }
-  } catch {
-    // Ignorar
-  }
-  return null;
+  if (!email?.trim() || !uid?.trim()) return null;
+  return {
+    email: email.trim().toLowerCase(),
+    rol: "PARAMEDICO",
+    nombre: "Operador",
+    matricula: "",
+  };
 }

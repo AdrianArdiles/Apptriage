@@ -5,6 +5,7 @@
  */
 export function cleanObject(value: unknown): unknown {
   if (value === undefined || value === null) return "";
+  if (typeof value === "number" && !Number.isFinite(value)) return "";
   if (Array.isArray(value)) return value.map((item) => cleanObject(item));
   if (typeof value === "object") {
     const out: Record<string, unknown> = {};
