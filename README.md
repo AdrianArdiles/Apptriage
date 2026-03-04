@@ -29,6 +29,19 @@ npm run dev
 
 Abre [http://localhost:3000](http://localhost:3000).
 
+## Despliegue (producción)
+
+- **Web:** la app (páginas + APIs) se despliega en **Vercel**. URL de producción: [https://apptriage.vercel.app](https://apptriage.vercel.app).
+  ```bash
+  npm run deploy
+  ```
+- **Android (APK):** build estático + Capacitor; la APK usa la API en Vercel.
+  ```bash
+  npm run build:android
+  npx cap open android
+  ```
+- **Autenticación:** Firebase Auth (Google y correo/contraseña). El dominio de Vercel debe estar en Firebase → Authentication → Dominios autorizados.
+
 ## Estructura
 
 - **`app/`** — App Router: página principal y API de triaje (`/api/triage`).
