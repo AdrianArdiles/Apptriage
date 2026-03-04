@@ -63,3 +63,10 @@ Si en Firebase agregás o cambiás una app Android, o las SHA-1, volvé a descar
 | Endurecer reglas (opcional) | **Vos** cuando quieras |
 
 No hay ninguna configuración adicional que se pueda “ejecutar” desde el proyecto para la base de datos: con las reglas que mostraste, **si el usuario está autenticado**, Firestore y Realtime Database están listos para operar. Lo único crítico que a veces falta es **registrar todas las SHA-1** que usás para compilar el APK.
+
+---
+
+## Acceso a la app (quién puede entrar)
+
+- **adrianadroco@gmail.com**: siempre puede entrar como ADMIN (hardcoded).
+- **Cualquier otro email**: primero se busca en la colección Firestore **authorized_users** (documento con ese `email`, `rol`, `nombre`, `matricula`). Si no hay documento, se usa **fallback**: si el usuario tiene documento en la colección **users** (creado al iniciar sesión), puede entrar como PARAMEDICO con nombre "Operador". Así, todos los que se registran (Email o Google) pueden usar la app aunque aún no estén en `authorized_users`. Para dar roles o nombres específicos, agregá documentos en `authorized_users` con el mismo formato que el admin.

@@ -3,7 +3,7 @@
 import * as React from "react";
 import type { User } from "firebase/auth";
 import { onAuthStateChanged, ensureGoogleAuthInitialized, type UserProfile } from "@/lib/firebase-auth";
-import { getAuthorizedUserByEmail, type AuthorizedUser } from "@/lib/authorized-users";
+import { getAuthorizedUserByEmailOrUserDoc, type AuthorizedUser } from "@/lib/authorized-users";
 import { ensureUserDocument } from "@/lib/firestore-users";
 import { syncFromProfile, clearOperadorId } from "@/lib/operador-storage";
 import { crearPrimerAdminEnFirestore } from "@/lib/seed-authorized-admin";
@@ -63,10 +63,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   }, []);
 
   const refreshProfile = React.useCallback(async () => {
-    if (!user?.email) return;
+    if (!user?.email || !user?.uid) return;
     setAuthError(null);
     try {
-      const a = await getAuthorizedUserByEmail(user.email);
+      const a = await getAuthorizedUserByEmailOrUserDoc(user.email, user.uid);
       if (a) {
         setAuthorizedUser(a);
         const p = authorizedToProfile(a);
@@ -103,8 +103,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         } catch (e) {
           console.warn("[Firestore users] No se pudo crear documento de usuario:", e);
         }
-        // Buscar en authorized_users para permisos de la app
-        const a = email ? await getAuthorizedUserByEmail(email) : null;
+        // Buscar en authorized_users; si no está, permitir si tiene doc en users (fallback PARAMEDICO)
+        const a = email && u.uid ? await getAuthorizedUserByEmailOrUserDoc(email, u.uid) : null;
         if (a) {
           setAuthorizedUser(a);
           const p = authorizedToProfile(a);
