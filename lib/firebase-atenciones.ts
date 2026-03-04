@@ -4,6 +4,22 @@ import type { ReportSummaryData } from "@/lib/report-summary";
 
 const PATH_ATENCIONES = "atenciones";
 
+/** Firebase Realtime DB no acepta undefined. Convierte undefined a null y elimina claves undefined en objetos anidados. */
+function sanitizeForFirebase<T>(value: T): T extends undefined ? null : T {
+  if (value === undefined) return null as T extends undefined ? null : T;
+  if (value === null) return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizeForFirebase(item)) as T;
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === undefined) continue;
+      out[k] = sanitizeForFirebase(v);
+    }
+    return out as T;
+  }
+  return value;
+}
+
 /** Objeto diagnóstico para Firebase (timestamp se rellena con serverTimestamp()). */
 export interface DiagnosticoFirebase {
   nombre: string;
@@ -55,7 +71,8 @@ export function pushAtencionToFirebase(
     data: dataWithDiagnostico,
     diagnostico_codigo: diagnostico?.cie11 ?? entry.diagnostico_codigo ?? undefined,
   };
-  return set(ref(database, `${PATH_ATENCIONES}/${id}`), payload).catch((err) => {
+  const sanitized = sanitizeForFirebase(payload) as typeof payload;
+  return set(ref(database, `${PATH_ATENCIONES}/${id}`), sanitized).catch((err) => {
     console.warn("[Firebase] Error guardando atención:", err?.message ?? err);
     throw err;
   });

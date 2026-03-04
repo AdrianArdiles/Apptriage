@@ -111,6 +111,19 @@ Al salir: **“Cerrar Gestión”** cierra la sesión de Manager y vuelve a la p
 | Móvil | Capacitor 8 (Android); `webDir: "out"` (export estático) |
 | Build web | Next.js estándar con `BUILD_WEB=1` para Vercel/Netlify/Firebase Hosting |
 
+### Configuración de Google Sign-In (botón "Continuar con Google")
+
+Si el botón de Google falla con *"Se requiere un ID de cliente web"* o el ID aparece vacío:
+
+1. **Firebase Console** → **Authentication** → **Sign-in method** → **Google** → activar y copiar el **ID de cliente web** (termina en `.apps.googleusercontent.com`).
+2. Crear o editar **`.env.local`** en la raíz del proyecto y agregar:
+   ```bash
+   NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID=el_id_que_copiaste.apps.googleusercontent.com
+   ```
+3. Reiniciar el servidor de desarrollo (`npm run dev`). En build de producción, la variable debe estar definida en el entorno (Vercel, etc.).
+
+El mismo ID debe estar en `capacitor.config.ts` y en `android/app/src/main/res/values/strings.xml` para que Google funcione en la app Android. Ver `.env.example` para referencia.
+
 ---
 
 ## 2. Estructura del proyecto

@@ -447,7 +447,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
       paciente_id: pacienteId.trim() || undefined,
       nombre_paciente: nombrePaciente.trim() || undefined,
       dni: dni.trim() || undefined,
-      sintomas_texto: sintomasTexto.trim() || undefined,
+      sintomas_texto: (sintomasTexto?.trim() ?? "") || "Ficha clínica XABCDE",
       xabcde: xabcde as Record<string, string>,
       signos_vitales: Object.keys(signos).length > 0 ? signos : undefined,
       glasgow: glasgowCompleto ? { E: glasgowE, V: glasgowV, M: glasgowM, puntaje_glasgow: puntajeGlasgow } : undefined,

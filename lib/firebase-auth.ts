@@ -45,10 +45,14 @@ export function signUp(email: string, password: string) {
 }
 
 /**
- * ID de cliente web (mismo que en capacitor.config.ts y strings.xml).
- * Reemplazá TU_ID_WEB_AQUÍ por tu ID que termina en .apps.googleusercontent.com
+ * ID de cliente web para Google Sign-In.
+ * 1) En Firebase Console → Authentication → Sign-in method → Google → "ID de cliente web" (copiá el valor).
+ * 2) Definí en .env.local: NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID=tu_id.apps.googleusercontent.com
+ * Si no está definido, se usa el valor por defecto (mismo que capacitor.config.ts / strings.xml).
  */
-export const GOOGLE_WEB_CLIENT_ID = "882958082764-d5ddvhafpj21gbn583a6ds7bsa1cj3ds.apps.googleusercontent.com";
+export const GOOGLE_WEB_CLIENT_ID =
+  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID?.trim()) ||
+  "882958082764-d5ddvhafpj21gbn583a6ds7bsa1cj3ds.apps.googleusercontent.com";
 
 /** Iniciar sesión con Google. En nativo usa el plugin (inicializado desde la pantalla de login); en web popup. */
 export async function signInWithGoogle() {
