@@ -4,6 +4,8 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { hasManagerSession, clearManagerSession } from "@/lib/manager-session";
+import { signOut } from "@/lib/firebase-auth";
+import { AuthenticatedNav } from "@/components/authenticated-nav";
 
 const BG_DARK = "#0f172a";
 const CARD_BG = "#1e293b";
@@ -36,13 +38,24 @@ export default function ManagerLayout({
   React.useEffect(() => {
     if (!mounted) return;
     if (!hasManagerSession()) {
-      router.replace("/");
+      router.replace("/atencion");
     }
   }, [mounted, router]);
 
   const handleCerrarGestion = () => {
     clearManagerSession();
-    router.push("/");
+    router.push("/atencion");
+  };
+
+  const handleCerrarSesion = async () => {
+    try {
+      clearManagerSession();
+      await signOut();
+      router.replace("/login");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (typeof alert === "function") alert(`Error al cerrar sesión: ${msg}`);
+    }
   };
 
   if (!mounted || !hasSession) {
@@ -55,8 +68,9 @@ export default function ManagerLayout({
 
   return (
     <div className="min-h-screen font-sans text-slate-100" style={{ backgroundColor: BG_DARK }}>
+      <AuthenticatedNav />
       <header
-        className="sticky top-0 z-40 border-b px-4 py-3"
+        className="sticky top-[52px] z-40 border-b px-4 py-3"
         style={{ backgroundColor: CARD_BG, borderColor: BORDER_SUBTLE }}
       >
         <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

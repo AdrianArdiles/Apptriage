@@ -207,7 +207,7 @@ Autenticación: Firebase Auth (email/contraseña). Perfil en `users/{uid}` (nomb
   - `app/api/triage/route.ts`: recibe triaje, puede usar mock-db/Prisma y devolver nivel/recomendación.
   - `app/api/dashboard/pacientes/route.ts`: lista de pacientes para el dashboard (mock-db/Prisma).
 
-En build para Android se usa **export estático**; las rutas bajo `app/api` se ocultan con scripts para que el build no falle. En producción móvil la app suele apuntar a un backend desplegado (p. ej. Vercel).
+En build para Android y para Firebase Hosting se usa **export estático**; las rutas bajo `app/api` se ocultan con scripts en el build Android. En producción web (Firebase Hosting) y móvil la app puede apuntar a un backend externo para la API de triaje si se configura en `lib/api.ts`.
 
 ---
 
@@ -219,11 +219,13 @@ En build para Android se usa **export estático**; las rutas bajo `app/api` se o
 2. `next.config.mjs`: con la variable por defecto **no** se define `BUILD_WEB`, por lo que se usa `output: "export"`.
 3. `capacitor.config.ts`: `webDir: "out"`. El proyecto Android en `android/` sirve la app desde esa carpeta.
 
-### Web (Vercel / Netlify / Firebase Hosting)
+### Web (Firebase Hosting — raíz única)
 
-1. Definir variable de entorno **`BUILD_WEB=1`** en la plataforma.
-2. Comando de build: `npm run build:web` (equivale a `cross-env BUILD_WEB=1 prisma generate && next build`). Con `BUILD_WEB=1`, en `next.config.mjs` no se aplica `output: "export"`, por lo que es un build estándar de Next.js (SSR/API disponibles si se usan).
-3. Para Vercel: build command `npm run build:web` (o `next build` con `BUILD_WEB=1`). Para Netlify/Firebase Hosting, usar el mismo comando y la carpeta de salida que indique la documentación de Next.js para esa plataforma.
+1. **Build estático**: `npm run build:hosting` (equivale a `prisma generate && next build`). No se usa `BUILD_WEB=1`, por lo que en `next.config.mjs` se aplica `output: "export"` y la salida es la carpeta **`out`**.
+2. **Configuración**: `firebase.json` apunta `hosting.public` a `out`. Las rutas que no coinciden con un archivo estático se reescriben a `/index.html` (SPA), de modo que `/manager`, `/doctor`, etc. funcionan sin 404.
+3. **Despliegue**: `npm run deploy:hosting` (build + `firebase deploy --only hosting`). Proyecto por defecto en `.firebaserc`: `ambulanciapro`.
+4. **Caché**: Encabezados en `firebase.json`: `/_next/static/**` y assets con hash tienen `max-age=31536000, immutable`; `index.html` tiene `max-age=0, must-revalidate` para que las actualizaciones se vean enseguida en móviles.
+5. **API Keys de Firebase**: La configuración en `lib/firebase.ts` es la de producción (proyecto `ambulanciapro`). En [Google Cloud Console](https://console.cloud.google.com/) puedes restringir la API key por dominio (p. ej. `ambulanciapro.web.app`, `ambulanciapro.firebaseapp.com`) para mayor seguridad.
 
 ---
 
@@ -245,11 +247,31 @@ En build para Android se usa **export estático**; las rutas bajo `app/api` se o
 
 ---
 
-## 8. Seguridad y buenas prácticas
+## 8. Sistema de usuarios y control de acceso
+
+- **Inicio de sesión**: Google (popup) o email/contraseña (Firebase Auth). El botón "Continuar con Google" requiere tener **Google** habilitado en Firebase Console → Authentication → Sign-in method.
+- **Control estricto**: Antes de permitir el acceso al Dashboard o a la app, el sistema comprueba si el email del usuario está en la colección **Firestore** `authorized_users`.
+- **Estructura de cada documento en `authorized_users`**:
+  - `email` (string): email en minúsculas (se compara en minúsculas).
+  - `rol` (string): `"PARAMEDICO"`, `"DOCTOR"` o `"ADMIN"`.
+  - `nombre` (string): nombre completo del profesional.
+  - `matricula` (string): matrícula o identificador.
+- **Redirección por rol**: Si el usuario está autorizado, `ADMIN` y `DOCTOR` van al Panel de Gestión (`/manager`); `PARAMEDICO` va a Atención (`/atencion`). La variable `NEXT_PUBLIC_MANAGER_EMAILS` sigue pudiendo usarse para incluir más emails como manager.
+- **Pantalla de bloqueo**: Si el usuario inicia sesión pero su email **no** está en `authorized_users`, se muestra "Acceso denegado" y se redirige a **`/acceso-pendiente`** (o se muestra el mensaje en la misma pantalla con botón "Volver al inicio").
+- **Admin sin colección**: El email `adrianadroco@gmail.com` siempre tiene rol ADMIN y puede entrar aunque la colección `authorized_users` esté vacía (para poder configurar el resto).
+- **Crear el primer documento en Firestore**: Una vez logueado como admin, en la **consola del navegador** (F12 → Console) ejecutá:  
+  `await window.crearPrimerAdminFirestore()`  
+  Eso crea un documento en `authorized_users` con el administrador. Luego podés agregar más usuarios desde la consola de Firestore o desde tu backend.
+- **Persistencia**: La sesión de Firebase Auth se mantiene con `onAuthStateChanged`; el paramédico no tiene que volver a iniciar sesión cada vez que abre la app en el móvil (salvo que cierre sesión o expire el token).
+
+---
+
+## 9. Seguridad y buenas prácticas
 
 - Las rutas `/manager/*` comprueban sesión Manager (sessionStorage); si no existe, redirección a `/`.
 - Los componentes de Estadísticas y Exportar solo se cargan dentro del panel Manager (no en la app del paramédico).
 - Firebase Realtime Database debe configurarse con reglas que restrinjan lectura/escritura según autenticación y rutas (p. ej. `atenciones`, `solicitudes_medicacion`, `intervenciones`, `mensajes`).
+- **Firestore**: La colección `authorized_users` debe tener reglas que permitan solo lectura a usuarios autenticados (o solo desde el backend) para no exponer la lista completa.
 - No se almacenan contraseñas en el cliente; se usa Firebase Auth. El PIN de Manager está en `lib/manager-auth.ts` (por defecto 1234; en producción conviene externalizarlo o usar un backend).
 
 ---

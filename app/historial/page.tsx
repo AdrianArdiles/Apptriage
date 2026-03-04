@@ -210,7 +210,7 @@ export default function HistorialPage(): React.ReactElement {
           }
         }
         if (!uriToOpen) {
-          uriToOpen = await generatePDFAndGetUri(entry.data);
+          uriToOpen = await generatePDFAndGetUri(entry.data, entry.id);
           if (uriToOpen) {
             await FileOpener.open({
               filePath: uriToOpen,

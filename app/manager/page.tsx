@@ -174,6 +174,50 @@ export default function ManagerPage(): React.ReactElement {
           <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-slate-400">
             Unidades activas en la calle
           </h2>
+          {/* Tabla de intervenciones en tiempo real: triage (color) + CIE-11 */}
+          {liveEntries.length > 0 && (
+            <div className="mb-4 overflow-x-auto rounded-xl border border-slate-600/50" style={{ backgroundColor: CARD_BG }}>
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-slate-600/70">
+                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Unidad</th>
+                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Paciente</th>
+                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Paso</th>
+                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Nivel</th>
+                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">CIE-11</th>
+                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Diagnóstico</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {liveEntries.map((entry) => {
+                    const stepLabel = STEP_LABELS[entry.currentStep ?? 0] ?? `Paso ${entry.currentStep}`;
+                    const isCritical = entry.hasRCP === true;
+                    const diag = entry.diagnostico_presuntivo;
+                    const nivelLabel = isCritical ? "RCP" : "En curso";
+                    const nivelColor = isCritical ? RED_CRITICAL : GOLD;
+                    const nivelStyle = {
+                      backgroundColor: isCritical ? "rgba(220, 38, 38, 0.25)" : GOLD_DIM,
+                      color: nivelColor,
+                    };
+                    return (
+                      <tr key={entry.key} className="border-b border-slate-600/50 hover:bg-slate-700/30 transition-colors">
+                        <td className="px-3 py-2 font-mono text-slate-200">{entry.unidadId || entry.operadorId || "—"}</td>
+                        <td className="px-3 py-2 text-slate-200">{entry.nombre_paciente || entry.paciente_id || "—"}</td>
+                        <td className="px-3 py-2 text-slate-300">{stepLabel}</td>
+                        <td className="px-3 py-2">
+                          <span className="inline-flex rounded px-2 py-0.5 text-xs font-bold uppercase" style={nivelStyle}>
+                            {nivelLabel}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-amber-400">{diag?.codigo_cie ?? "—"}</td>
+                        <td className="px-3 py-2 text-slate-300 max-w-[140px] truncate" title={diag?.termino_comun ?? ""}>{diag?.termino_comun ?? "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto rounded-xl border border-slate-600/50 space-y-3 pr-1" style={{ backgroundColor: CARD_BG }}>
             {liveEntries.length === 0 ? (
               <div className="p-8 text-center">

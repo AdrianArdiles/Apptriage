@@ -1,8 +1,15 @@
-import { ref, set, get, remove } from "firebase/database";
+import { ref, set, get, remove, serverTimestamp } from "firebase/database";
 import { getDb } from "@/lib/firebase";
 import type { ReportSummaryData } from "@/lib/report-summary";
 
 const PATH_ATENCIONES = "atenciones";
+
+/** Objeto diagnóstico para Firebase (timestamp se rellena con serverTimestamp()). */
+export interface DiagnosticoFirebase {
+  nombre: string;
+  cie11: string;
+  timestamp?: unknown;
+}
 
 /** Entrada de atención guardada en Firebase (sin fileUri, que es local al dispositivo). */
 export interface AtencionFirebaseEntry {
@@ -13,6 +20,8 @@ export interface AtencionFirebaseEntry {
   operadorId?: string;
   unidadId?: string;
   data: ReportSummaryData;
+  /** Código CIE-11 del diagnóstico seleccionado (para que el Manager lo vea al instante). */
+  diagnostico_codigo?: string;
 }
 
 /** Caracteres no permitidos en claves de Firebase Realtime Database */
@@ -21,23 +30,34 @@ function sanitizeKey(key: string): string {
 }
 
 /**
- * Guarda una atención con su informe en Firebase. Se llama tras generar el PDF y añadir al historial local.
+ * Guarda una atención con su informe en Firebase. Devuelve una promesa para poder esperar al envío.
+ * Si se pasa diagnostico, se guarda en data y en diagnostico_codigo para que el Manager lo vea al instante.
  */
-export function pushAtencionToFirebase(entry: AtencionFirebaseEntry): void {
+export function pushAtencionToFirebase(
+  entry: AtencionFirebaseEntry,
+  diagnostico?: { nombre: string; cie11: string }
+): Promise<void> {
   const database = getDb();
-  if (!database) return;
+  if (!database) return Promise.resolve();
   const id = sanitizeKey(entry.id);
-  const payload: AtencionFirebaseEntry = {
-    id: entry.id,
-    createdAt: entry.createdAt,
-    nombrePaciente: entry.nombrePaciente,
-    pacienteId: entry.pacienteId,
-    operadorId: entry.operadorId,
-    unidadId: entry.unidadId,
-    data: entry.data,
+  const dataWithDiagnostico: ReportSummaryData & { diagnostico_firebase?: DiagnosticoFirebase } = {
+    ...entry.data,
   };
-  set(ref(database, `${PATH_ATENCIONES}/${id}`), payload).catch((err) => {
+  if (diagnostico?.nombre) {
+    dataWithDiagnostico.diagnostico_firebase = {
+      nombre: diagnostico.nombre,
+      cie11: diagnostico.cie11 || "",
+      timestamp: serverTimestamp(),
+    };
+  }
+  const payload = {
+    ...entry,
+    data: dataWithDiagnostico,
+    diagnostico_codigo: diagnostico?.cie11 ?? entry.diagnostico_codigo ?? undefined,
+  };
+  return set(ref(database, `${PATH_ATENCIONES}/${id}`), payload).catch((err) => {
     console.warn("[Firebase] Error guardando atención:", err?.message ?? err);
+    throw err;
   });
 }
 

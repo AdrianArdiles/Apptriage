@@ -14,6 +14,13 @@ export interface UbicacionPayload {
   updatedAt: string;
 }
 
+/** Diagnóstico presuntivo con terminología CIE-11 para PDF y central. */
+export interface DiagnosticoPresuntivoPayload {
+  termino_comun: string;
+  codigo_cie: string;
+  descripcion_tecnica: string;
+}
+
 export interface IntervencionPayload {
   operadorId: string;
   unidadId: string;
@@ -31,6 +38,8 @@ export interface IntervencionPayload {
   ubicacion?: UbicacionPayload;
   /** Firma del paramédico logueado (Nombre Apellido - Matrícula) */
   atendido_por?: string;
+  /** Diagnóstico presuntivo con CIE-11 (código y descripción para central). */
+  diagnostico_presuntivo?: DiagnosticoPresuntivoPayload;
 }
 
 /**

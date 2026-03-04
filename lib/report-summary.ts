@@ -1,4 +1,5 @@
 import type { SignosVitales } from "@/lib/types";
+import type { DiagnosticoCIE } from "@/lib/diagnosticos-emergencias";
 
 /** Datos necesarios para generar el resumen (misma forma que DatosEvaluacionInicial). */
 export interface ReportSummaryData {
@@ -18,6 +19,12 @@ export interface ReportSummaryData {
   bp_systolic?: number;
   bp_diastolic?: number;
   timestamp_eventos?: { evento: string; hora: string }[];
+  /** Diagnóstico presuntivo con CIE-11 (código y descripción en PDF/Firebase). */
+  diagnostico?: DiagnosticoCIE;
+  /** Para triaje: impresión clínica en formato PDF "Impresión Clínica: X (CIE-11: Y)". */
+  impresion_clinica?: { nombre: string; cie11: string };
+  /** Nivel de triaje 1-5 (5 = Rojo). Para banda de gravedad en el PDF. */
+  nivel_gravedad?: number;
 }
 
 const SEP = "\n";
@@ -73,6 +80,15 @@ export function generateReportSummary(data: ReportSummaryData): string {
   sections.push(`  Pérdida de sangre: ${data.blood_loss ?? "—"}`);
   sections.push(`  Estado vía aérea: ${data.airway_status ?? "—"}`);
   sections.push("");
+
+  if (data.diagnostico) {
+    sections.push("DIAGNÓSTICO PRESUNTIVO (CIE-11)");
+    sections.push(LINE);
+    sections.push(`  Término: ${data.diagnostico.termino_comun}`);
+    sections.push(`  Código CIE-11: ${data.diagnostico.codigo_cie}`);
+    sections.push(`  Descripción: ${data.diagnostico.descripcion_tecnica}`);
+    sections.push("");
+  }
 
   sections.push("ESCALA DE GLASGOW");
   sections.push(LINE);

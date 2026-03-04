@@ -24,6 +24,7 @@ import {
 import { playNotificationSound } from "@/lib/notification-sound";
 import { useGpsSync } from "@/lib/use-gps-sync";
 import { useAuth } from "@/lib/auth-context";
+import { signOut } from "@/lib/firebase-auth";
 import type { RegistroTriage } from "@/lib/types";
 import {
   Dialog,
@@ -66,13 +67,17 @@ function toPayloadTriage(data: DatosEvaluacionInicial): PayloadTriage {
 function AtencionContent(): React.ReactElement | null {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, isUnauthorized } = useAuth();
   const [resultado, setResultado] = React.useState<RegistroTriage | null>(null);
 
   React.useEffect(() => {
     if (authLoading) return;
-    if (!user) router.replace("/");
-  }, [user, authLoading, router]);
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+    if (isUnauthorized) router.replace("/acceso-pendiente");
+  }, [user, authLoading, isUnauthorized, router]);
 
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -224,6 +229,7 @@ function AtencionContent(): React.ReactElement | null {
   }, [router]);
 
   if (!authLoading && !user) return null;
+  if (isUnauthorized) return null;
 
   return (
     <div
@@ -249,7 +255,7 @@ function AtencionContent(): React.ReactElement | null {
               <p className="text-xs text-slate-500">Ficha Clínica · XABCDE</p>
             </div>
           </div>
-          <nav className="flex items-center gap-2">
+          <nav className="flex flex-wrap items-center gap-2">
             <Link href="/?from=nav" className="text-sm font-medium text-slate-400 hover:text-slate-100">Inicio</Link>
             <Link href="/historial" className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-sm font-medium text-slate-300 hover:text-slate-100 hover:underline active:opacity-80">
               Historial
@@ -261,6 +267,13 @@ function AtencionContent(): React.ReactElement | null {
             >
               Dashboard
             </Link>
+            <button
+              type="button"
+              onClick={() => signOut().then(() => router.push("/"))}
+              className="text-sm font-medium text-slate-500 hover:text-slate-300 underline"
+            >
+              Cerrar sesión
+            </button>
           </nav>
         </div>
       </header>
@@ -297,13 +310,13 @@ function AtencionContent(): React.ReactElement | null {
         </div>
       )}
 
-      <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8 md:px-8">
+      <main className="mx-auto w-full max-w-3xl px-3 py-3 sm:px-4 sm:py-4">
         {!resultado && (
-          <div className="mb-4 flex justify-end">
+          <div className="mb-2 flex justify-end">
             <button
               type="button"
               onClick={() => setModalCancelarOpen(true)}
-              className="min-h-[44px] rounded-xl border-2 px-4 py-2.5 text-sm font-semibold text-red-400 transition hover:bg-red-500/10 hover:text-red-300"
+              className="min-h-[40px] rounded-lg border-2 px-3 py-2 text-xs font-semibold text-red-400 transition hover:bg-red-500/10 hover:text-red-300"
               style={{ borderColor: RED_EMERGENCY }}
               aria-label="Cancelar atención actual"
             >
@@ -312,23 +325,40 @@ function AtencionContent(): React.ReactElement | null {
           </div>
         )}
         {error && (
-          <div role="alert" className="mb-8 rounded-xl border border-red-800 bg-red-900/30 px-4 py-3 text-sm text-red-200">
+          <div role="alert" className="mb-2 rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-xs text-red-200">
             {error}
           </div>
         )}
         {queueMessage && (
-          <div role="status" className="mb-8 rounded-xl border border-emerald-700 bg-emerald-900/30 px-4 py-3 text-sm text-emerald-200">
+          <div role="status" className="mb-2 rounded-lg border border-emerald-700 bg-emerald-900/30 px-3 py-2 text-xs text-emerald-200">
             {queueMessage}
           </div>
         )}
         {pendingCount > 0 && !queueMessage && (
-          <div role="status" className="mb-6 rounded-xl border border-amber-700 bg-amber-900/30 px-4 py-2 text-sm text-amber-200">
-            Tienes {pendingCount} reporte(s) en Pendientes. Se enviarán cuando haya conexión.
+          <div role="status" className="mb-2 rounded-lg border border-amber-700 bg-amber-900/30 px-3 py-1.5 text-xs text-amber-200">
+            {pendingCount} en Pendientes. Se enviarán con conexión.
           </div>
         )}
 
         {resultado ? (
-          <TriageResult registro={resultado} onNuevoTriage={handleNuevoTriage} />
+          <TriageResult
+            registro={resultado}
+            onNuevoTriage={handleNuevoTriage}
+            onSugerirNivel={(nivel) => {
+              setResultado((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      nivel_gravedad: nivel,
+                      nivel:
+                        nivel === 5
+                          ? ("Resucitación (Inmediato)" as const)
+                          : prev.nivel,
+                    }
+                  : null
+              );
+            }}
+          />
         ) : (
           <div className="relative">
             {isSubmitting && (
@@ -341,6 +371,7 @@ function AtencionContent(): React.ReactElement | null {
               onSubmit={handleSubmit}
               isSubmitting={isSubmitting}
               onNuevaAtencion={handleResetAll}
+              userEmail={user?.email ?? undefined}
             />
           </div>
         )}

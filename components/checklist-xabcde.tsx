@@ -13,17 +13,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { SignosVitales } from "@/lib/types";
+import type { DiagnosticoCIE } from "@/lib/diagnosticos-emergencias";
 import {
   loadFichaClinica,
   saveFichaClinica,
   type TimestampEvento,
 } from "@/lib/ficha-clinica-storage";
-import { generateAndSharePDF } from "@/lib/share-pdf";
+import { DiagnosticoAutocomplete } from "@/components/diagnostico-autocomplete";
+import { generateAndSharePDFSafe, generateAndDownloadPDF, canUseShare } from "@/lib/share-pdf";
 import type { ReportSummaryData } from "@/lib/report-summary";
 import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
 import { pushAtencionToFirebase } from "@/lib/firebase-atenciones";
+import { pushAtencionToFirestore } from "@/lib/firestore-atenciones";
 import { getOperadorId, getUnidadId, getAtendidoPor } from "@/lib/operador-storage";
-import { syncIntervencionToFirebase } from "@/lib/firebase-intervenciones";
+import { syncIntervencionToFirebase, removeIntervencionFromFirebase } from "@/lib/firebase-intervenciones";
 import { hapticImpactMedium } from "@/lib/haptics";
 import { ToastTimestamp } from "@/components/toast-timestamp";
 
@@ -81,6 +84,8 @@ export interface DatosEvaluacionInicial {
   bp_systolic?: number;
   bp_diastolic?: number;
   timestamp_eventos?: TimestampEvento[];
+  /** Diagnóstico presuntivo con CIE-11 (solo término común en UI; código y descripción en PDF/Firebase). */
+  diagnostico?: DiagnosticoCIE | null;
 }
 
 function formatHora(date: Date): string {
@@ -92,25 +97,27 @@ export interface ChecklistXABCDEProps {
   isSubmitting?: boolean;
   /** Llamado después de generar y guardar el PDF; el padre puede limpiar Firebase y formulario. */
   onNuevaAtencion?: () => void;
+  /** Email del usuario logueado (Firebase Auth) para guardar en Firestore. */
+  userEmail?: string;
 }
 
 const CARD_BG = "#1e293b";
 const BLUE_MEDICAL = "#2563eb";
 const RED_EMERGENCY = "#dc2626";
 
-const CARD_DARK = "rounded-xl border text-slate-100 shadow-sm";
+const CARD_DARK = "rounded-lg border text-slate-100 shadow-sm";
 const CARD_DARK_STYLE = { backgroundColor: CARD_BG, borderColor: "rgba(37, 99, 235, 0.35)" };
 const INPUT_DARK =
-  "min-h-[44px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-[#0f172a]";
-const LABEL_DARK = "text-sm font-medium text-slate-300";
+  "min-h-[40px] rounded-lg border-2 border-slate-600 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-[#0f172a]";
+const LABEL_DARK = "text-xs font-medium text-slate-300";
 const BTN_GRADIENT =
-  "min-h-[52px] touch-manipulation rounded-xl px-6 py-4 text-base font-semibold text-white transition active:scale-[0.98]";
+  "min-h-[44px] touch-manipulation rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition active:scale-[0.98]";
 const BTN_GRADIENT_STYLE = {
   background: `linear-gradient(135deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)`,
-  boxShadow: "0 0 20px rgba(37, 99, 235, 0.4), 0 4px 12px rgba(0,0,0,0.3)",
+  boxShadow: "0 0 16px rgba(37, 99, 235, 0.35), 0 2px 8px rgba(0,0,0,0.25)",
 };
 
-export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEProps): React.ReactElement {
+export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: ChecklistXABCDEProps): React.ReactElement {
   const [horaInicio, setHoraInicio] = React.useState<string>("");
   const [inicioRegistrado, setInicioRegistrado] = React.useState(false);
   const [pacienteId, setPacienteId] = React.useState("");
@@ -137,9 +144,12 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
   const [glasgowM, setGlasgowM] = React.useState<number>(0);
   const [timestampEventos, setTimestampEventos] = React.useState<TimestampEvento[]>([]);
   const [timestampInput, setTimestampInput] = React.useState("");
+  const [diagnosticoPresuntivo, setDiagnosticoPresuntivo] = React.useState<DiagnosticoCIE | null>(null);
   const [currentStep, setCurrentStep] = React.useState(0);
-  const [pdfLoading, setPdfLoading] = React.useState(false);
-  const [pdfListo, setPdfListo] = React.useState(false);
+  const [finalizando, setFinalizando] = React.useState(false);
+  const [atencionFinalizada, setAtencionFinalizada] = React.useState(false);
+  const [lastData, setLastData] = React.useState<ReportSummaryData | null>(null);
+  const [compartirPdfLoading, setCompartirPdfLoading] = React.useState(false);
   const [syncError, setSyncError] = React.useState(false);
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
   const [pulseButtonKey, setPulseButtonKey] = React.useState<string | null>(null);
@@ -149,6 +159,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
 
   const TOTAL_STEPS = 12;
 
+  /** Reset completo para "Nueva Atención": incluye buscador de diagnósticos CIE-11 (diagnosticoPresuntivo). */
   const resetForm = React.useCallback(() => {
     setHoraInicio("");
     setInicioRegistrado(false);
@@ -169,9 +180,11 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
     setGlasgowM(0);
     setTimestampEventos([]);
     setTimestampInput("");
+    setDiagnosticoPresuntivo(null);
     setCurrentStep(0);
-    setPdfLoading(false);
-    setPdfListo(false);
+    setFinalizando(false);
+    setAtencionFinalizada(false);
+    setLastData(null);
     setSyncError(false);
     setToastMessage(null);
     setLastAddedHora(null);
@@ -218,6 +231,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
       glasgowM,
       timestamp_eventos: timestampEventos,
       currentStep,
+      diagnostico: diagnosticoPresuntivo,
     });
   }, [
     horaInicio,
@@ -238,6 +252,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
     glasgowM,
     timestampEventos,
     currentStep,
+    diagnosticoPresuntivo,
   ]);
 
   React.useEffect(() => {
@@ -261,6 +276,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
     setGlasgowV(loaded.glasgowV ?? 0);
     setGlasgowM(loaded.glasgowM ?? 0);
     setTimestampEventos(loaded.timestamp_eventos || []);
+    setDiagnosticoPresuntivo(loaded.diagnostico ?? null);
     setCurrentStep(Math.min(Math.max(0, loaded.currentStep ?? 0), TOTAL_STEPS - 1));
   }, []);
 
@@ -302,6 +318,13 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
       glasgow_score: puntajeGlasgow > 0 ? puntajeGlasgow : undefined,
       hasRCP,
       atendido_por: getAtendidoPor() || undefined,
+      diagnostico_presuntivo: diagnosticoPresuntivo
+        ? {
+            termino_comun: diagnosticoPresuntivo.termino_comun,
+            codigo_cie: diagnosticoPresuntivo.codigo_cie,
+            descripcion_tecnica: diagnosticoPresuntivo.descripcion_tecnica,
+          }
+        : undefined,
     };
     const t = setTimeout(() => syncIntervencionToFirebase(datos).catch(() => {}), 100);
     return () => clearTimeout(t);
@@ -316,6 +339,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
     timestampEventos,
     puntajeGlasgow,
     hasRCP,
+    diagnosticoPresuntivo,
   ]);
 
   const registrarInicio = React.useCallback(() => {
@@ -435,80 +459,134 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
       bp_systolic: bpSystolic ? Number(bpSystolic) : undefined,
       bp_diastolic: bpDiastolic ? Number(bpDiastolic) : undefined,
       timestamp_eventos: timestampEventos.length > 0 ? timestampEventos : undefined,
+      diagnostico: diagnosticoPresuntivo ?? undefined,
     };
   };
 
-  /** Flujo ENVIAR A CENTRAL: 1) update Firebase (opcional), 2) siempre generar PDF. PDF independiente de Firebase. */
-  const handleEnviarACentral = async () => {
+  /** Genera un ID único para el reporte (mismo formato que el PDF). */
+  const generateReportId = React.useCallback(() => {
+    return `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  }, []);
+
+  /** Flujo FINALIZAR ATENCIÓN: A) Firestore + Realtime DB, B) Generar PDF descarga/visualización, C) Feedback + limpiar formulario. */
+  const handleFinalizarAtencion = async () => {
     setSyncError(false);
-    setPdfLoading(true);
+    setFinalizando(true);
     const operadorId = getOperadorId() || "";
     const unidadId = getUnidadId() || "";
-    const payloadFirebase = {
-      operadorId,
-      unidadId,
-      updatedAt: new Date().toISOString(),
-      currentStep: TOTAL_STEPS - 1,
-      paciente_id: pacienteId.trim() || undefined,
-      nombre_paciente: nombrePaciente.trim() || undefined,
-      dni: dni.trim() || undefined,
-      sintomas_texto: sintomasTexto.trim() || undefined,
-      xabcde: xabcde as Record<string, string>,
-      hora_inicio_atencion: horaInicio || undefined,
-      timestamp_eventos: timestampEventos.length > 0 ? timestampEventos : undefined,
-      glasgow_score: puntajeGlasgow > 0 ? puntajeGlasgow : undefined,
-      hasRCP,
-      atendido_por: getAtendidoPor() || undefined,
-    };
-    if (operadorId || unidadId) {
-      try {
-        await syncIntervencionToFirebase(payloadFirebase);
-      } catch {
-        setSyncError(true);
-        setToastMessage("Guardado localmente. Error de sincronización");
-      }
-    }
     const data = buildReportSummaryData();
+    const reportId = generateReportId();
+    const nombrePacienteVal = (data.nombre_paciente ?? "").trim() || "Sin nombre";
+    const pacienteIdVal = (data.paciente_id ?? "").trim() || "sin-id";
+    const entry = {
+      id: reportId,
+      createdAt: new Date().toISOString(),
+      nombrePaciente: nombrePacienteVal,
+      pacienteId: pacienteIdVal,
+      operadorId: operadorId || undefined,
+      unidadId: unidadId || undefined,
+      data,
+      diagnostico_codigo: diagnosticoPresuntivo?.codigo_cie,
+    };
     try {
-      const { fileUri } = await generateAndSharePDF(data);
-      const entry = addToHistorialPdf(data, {
-        operadorId: operadorId || undefined,
-        unidadId: unidadId || undefined,
-        fileUri,
+      await pushAtencionToFirebase(
+        entry,
+        diagnosticoPresuntivo
+          ? { nombre: diagnosticoPresuntivo.termino_comun, cie11: diagnosticoPresuntivo.codigo_cie }
+          : undefined
+      );
+      const paramedicoNombre = getAtendidoPor() || operadorId || "Paramédico";
+      await pushAtencionToFirestore(entry, {
+        paramedicoNombre,
+        paramedicoEmail: (userEmail ?? "").trim() || undefined,
       });
-      pushAtencionToFirebase({
-        id: entry.id,
-        createdAt: entry.createdAt,
-        nombrePaciente: entry.nombrePaciente,
-        pacienteId: entry.pacienteId,
-        operadorId: entry.operadorId,
-        unidadId: entry.unidadId,
-        data: entry.data,
-      });
-      setPdfListo(true);
+
+      removeIntervencionFromFirebase(unidadId || operadorId);
+      setLastData(data);
+
+      if (canUseShare()) {
+        const result = await generateAndSharePDFSafe(data);
+        if (result.error) {
+          setToastMessage(result.error);
+        } else {
+          addToHistorialPdf(data, {
+            operadorId: operadorId || undefined,
+            unidadId: unidadId || undefined,
+            fileUri: result.fileUri,
+            id: result.reportId,
+          });
+          setToastMessage("Atención guardada. PDF generado y listo para compartir.");
+        }
+      } else {
+        const result = await generateAndDownloadPDF(data);
+        addToHistorialPdf(data, { operadorId: operadorId || undefined, unidadId: unidadId || undefined, id: result.reportId });
+        setToastMessage("Atención guardada. PDF descargado.");
+      }
+
+      if (typeof alert === "function") alert("Atención finalizada correctamente. El formulario se reiniciará.");
+      handleNuevaAtencionClick();
     } catch (e) {
-      console.error("Error al generar/compartir PDF:", e);
-      alert("No se pudo generar o compartir el PDF. Compruebe los permisos o use la descarga.");
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("Error al finalizar atención:", e);
+      setSyncError(true);
+      setToastMessage("Error: " + msg);
+      if (typeof alert === "function") alert("Error al finalizar atención: " + msg);
     } finally {
-      setPdfLoading(false);
+      setFinalizando(false);
     }
   };
+
+  /** Opcional: genera y comparte/descarga el PDF. No bloquea; si falla solo se muestra toast. */
+  const handleCompartirPDF = React.useCallback(async () => {
+    const data = lastData ?? buildReportSummaryData();
+    setCompartirPdfLoading(true);
+    try {
+      if (canUseShare()) {
+        const result = await generateAndSharePDFSafe(data);
+        if (result.error) {
+          setToastMessage(result.error);
+          return;
+        }
+        addToHistorialPdf(data, {
+          operadorId: getOperadorId() || undefined,
+          unidadId: getUnidadId() || undefined,
+          fileUri: result.fileUri,
+          id: result.reportId,
+        });
+        setToastMessage("PDF generado y compartido.");
+        setLastData(data);
+      } else {
+        const result = await generateAndDownloadPDF(data);
+        const operadorId = getOperadorId() || "";
+        const unidadId = getUnidadId() || "";
+        addToHistorialPdf(data, { operadorId: operadorId || undefined, unidadId: unidadId || undefined, id: result.reportId });
+        setToastMessage("PDF descargado.");
+      }
+    } catch (e) {
+      console.warn("Error al generar PDF:", e);
+      setToastMessage("No se pudo generar el PDF. Puede iniciar una nueva atención.");
+    } finally {
+      setCompartirPdfLoading(false);
+    }
+  // lastData es el dato enviado al finalizar; buildReportSummaryData es estable en comportamiento
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastData]);
 
   const renderStepContent = () => {
     switch (currentStep) {
       case 0:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg text-slate-100">Hora de inicio de atención</CardTitle>
-              <div className="flex flex-wrap items-center gap-3">
-                <Input readOnly value={horaInicio || "—"} className={`max-w-xs font-mono text-sm ${INPUT_DARK}`} aria-label="Hora de inicio" />
+            <CardHeader className="p-3 pb-2">
+              <CardTitle className="text-base text-slate-100">Hora de inicio</CardTitle>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Input readOnly value={horaInicio || "—"} className={`max-w-[180px] font-mono ${INPUT_DARK}`} aria-label="Hora de inicio" />
                 {!inicioRegistrado ? (
-                  <Button type="button" onClick={registrarInicio} size="lg" className={BTN_GRADIENT} style={BTN_GRADIENT_STYLE}>
+                  <Button type="button" onClick={registrarInicio} className={BTN_GRADIENT} style={BTN_GRADIENT_STYLE}>
                     Iniciar atención
                   </Button>
                 ) : (
-                  <span className="text-sm font-medium text-blue-400">Registrada</span>
+                  <span className="text-xs font-medium text-blue-400">Registrada</span>
                 )}
               </div>
             </CardHeader>
@@ -524,17 +602,17 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
         const item = XABCDE_ITEMS[idx];
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg text-slate-100">{item.letra} — {item.titulo}</CardTitle>
-              <p className="text-sm text-slate-400">{item.descripcion}. Toque para: Pendiente → OK → No aplica</p>
+            <CardHeader className="p-3 pb-1">
+              <CardTitle className="text-base text-slate-100">{item.letra} — {item.titulo}</CardTitle>
+              <p className="text-xs text-slate-400">{item.descripcion}. Toque: Pendiente → OK → No aplica</p>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-3 pt-0">
               <button
                 type="button"
                 onClick={() => toggleXABCDE(item.letra)}
-                className={`flex min-h-[56px] w-full touch-manipulation items-center justify-between rounded-xl border-2 px-4 py-3 text-left transition active:scale-[0.98] ${colorEstado(xabcde[item.letra] ?? "pendiente")}`}
+                className={`flex min-h-[48px] w-full touch-manipulation items-center justify-between rounded-lg border-2 px-3 py-2 text-left text-sm transition active:scale-[0.98] ${colorEstado(xabcde[item.letra] ?? "pendiente")}`}
               >
-                <span className="text-2xl font-bold">{item.letra}</span>
+                <span className="text-xl font-bold">{item.letra}</span>
                 <div className="text-right">
                   <p className="font-semibold">{item.titulo}</p>
                   <p className="text-xs opacity-90">{item.descripcion}</p>
@@ -547,61 +625,58 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
       case 7:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg text-slate-100">Signos vitales y datos clínicos</CardTitle>
+            <CardHeader className="p-3 pb-1">
+              <CardTitle className="text-base text-slate-100">Signos vitales</CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
-              <div><Label className={LABEL_DARK}>Pérdida de sangre</Label><Input value={bloodLoss} onChange={(e) => setBloodLoss(e.target.value)} placeholder="ej. Ninguna" className={INPUT_DARK} /></div>
-              <div><Label className={LABEL_DARK}>Estado vía aérea</Label><Input value={airwayStatus} onChange={(e) => setAirwayStatus(e.target.value)} placeholder="ej. Permeable" className={INPUT_DARK} /></div>
-              <div><Label className={LABEL_DARK}>Frec. respiratoria (rpm)</Label><Input type="number" min={0} max={60} value={respirationRate} onChange={(e) => setRespirationRate(e.target.value)} placeholder="16" className={INPUT_DARK} /></div>
-              <div><Label className={LABEL_DARK}>Pulso (lpm)</Label><Input type="number" min={0} max={300} value={pulse} onChange={(e) => setPulse(e.target.value)} placeholder="72" className={INPUT_DARK} /></div>
-              <div><Label className={LABEL_DARK}>TA sistólica</Label><Input type="number" value={bpSystolic} onChange={(e) => setBpSystolic(e.target.value)} placeholder="120" className={INPUT_DARK} /></div>
-              <div><Label className={LABEL_DARK}>TA diastólica</Label><Input type="number" value={bpDiastolic} onChange={(e) => setBpDiastolic(e.target.value)} placeholder="80" className={INPUT_DARK} /></div>
-              <div className="sm:col-span-2"><Label className={LABEL_DARK}>Saturación O₂ (%)</Label><Input type="number" min={0} max={100} value={saturacionOxigeno} onChange={(e) => setSaturacionOxigeno(e.target.value)} placeholder="98" className={INPUT_DARK} /></div>
+            <CardContent className="grid grid-cols-2 gap-2 p-3 pt-0">
+              <div><Label className={LABEL_DARK}>Pérdida sangre</Label><Input value={bloodLoss} onChange={(e) => setBloodLoss(e.target.value)} placeholder="Ninguna" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div><Label className={LABEL_DARK}>Vía aérea</Label><Input value={airwayStatus} onChange={(e) => setAirwayStatus(e.target.value)} placeholder="Permeable" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div><Label className={LABEL_DARK}>FR (rpm)</Label><Input type="number" min={0} max={60} value={respirationRate} onChange={(e) => setRespirationRate(e.target.value)} placeholder="16" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div><Label className={LABEL_DARK}>Pulso (lpm)</Label><Input type="number" min={0} max={300} value={pulse} onChange={(e) => setPulse(e.target.value)} placeholder="72" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div><Label className={LABEL_DARK}>TA sist.</Label><Input type="number" value={bpSystolic} onChange={(e) => setBpSystolic(e.target.value)} placeholder="120" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div><Label className={LABEL_DARK}>TA diast.</Label><Input type="number" value={bpDiastolic} onChange={(e) => setBpDiastolic(e.target.value)} placeholder="80" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div className="col-span-2"><Label className={LABEL_DARK}>SpO₂ (%)</Label><Input type="number" min={0} max={100} value={saturacionOxigeno} onChange={(e) => setSaturacionOxigeno(e.target.value)} placeholder="98" className={`mt-0.5 ${INPUT_DARK}`} /></div>
             </CardContent>
           </Card>
         );
       case 8:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg text-slate-100">Escala de Glasgow</CardTitle>
-              <p className="text-sm text-slate-400">Ocular, Verbal y Motor — puntaje automático</p>
+            <CardHeader className="p-3 pb-1">
+              <CardTitle className="text-base text-slate-100">Glasgow</CardTitle>
+              <p className="text-xs text-slate-400">Ocular, Verbal, Motor</p>
             </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-3">
-              <div><Label className={LABEL_DARK}>Ocular (E)</Label><Select value={glasgowE ? String(glasgowE) : "0"} onValueChange={(v) => setGlasgowE(Number(v))}><SelectTrigger className={`mt-1 ${INPUT_DARK} min-h-[44px] [&>span]:text-slate-100`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_OCULAR.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100">{o.label}</SelectItem>)}</SelectContent></Select></div>
-              <div><Label className={LABEL_DARK}>Verbal (V)</Label><Select value={glasgowV ? String(glasgowV) : "0"} onValueChange={(v) => setGlasgowV(Number(v))}><SelectTrigger className={`mt-1 ${INPUT_DARK} min-h-[44px] [&>span]:text-slate-100`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_VERBAL.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100">{o.label}</SelectItem>)}</SelectContent></Select></div>
-              <div><Label className={LABEL_DARK}>Motor (M)</Label><Select value={glasgowM ? String(glasgowM) : "0"} onValueChange={(v) => setGlasgowM(Number(v))}><SelectTrigger className={`mt-1 ${INPUT_DARK} min-h-[44px] [&>span]:text-slate-100`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_MOTOR.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100">{o.label}</SelectItem>)}</SelectContent></Select></div>
-              <p className="sm:col-span-3 text-slate-300 font-medium">Puntaje Glasgow total: {puntajeGlasgow}</p>
+            <CardContent className="grid grid-cols-3 gap-2 p-3 pt-0">
+              <div><Label className={LABEL_DARK}>E</Label><Select value={glasgowE ? String(glasgowE) : "0"} onValueChange={(v) => setGlasgowE(Number(v))}><SelectTrigger className={`mt-0.5 ${INPUT_DARK} min-h-[40px] [&>span]:text-slate-100 [&>span]:text-sm`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_OCULAR.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100 text-sm">{o.label}</SelectItem>)}</SelectContent></Select></div>
+              <div><Label className={LABEL_DARK}>V</Label><Select value={glasgowV ? String(glasgowV) : "0"} onValueChange={(v) => setGlasgowV(Number(v))}><SelectTrigger className={`mt-0.5 ${INPUT_DARK} min-h-[40px] [&>span]:text-slate-100 [&>span]:text-sm`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_VERBAL.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100 text-sm">{o.label}</SelectItem>)}</SelectContent></Select></div>
+              <div><Label className={LABEL_DARK}>M</Label><Select value={glasgowM ? String(glasgowM) : "0"} onValueChange={(v) => setGlasgowM(Number(v))}><SelectTrigger className={`mt-0.5 ${INPUT_DARK} min-h-[40px] [&>span]:text-slate-100 [&>span]:text-sm`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_MOTOR.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100 text-sm">{o.label}</SelectItem>)}</SelectContent></Select></div>
+              <p className="col-span-3 text-xs text-slate-300 font-medium">Total: {puntajeGlasgow}</p>
             </CardContent>
           </Card>
         );
       case 9:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg text-slate-100">Módulo de Tiempos</CardTitle>
-              <p className="text-sm text-slate-400">Registre la hora exacta de cada evento.</p>
+            <CardHeader className="p-3 pb-1">
+              <CardTitle className="text-base text-slate-100">Tiempos</CardTitle>
+              <p className="text-xs text-slate-400">Hora exacta de cada evento</p>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            <CardContent className="space-y-2 p-3 pt-0">
+              <div className="grid grid-cols-2 gap-1.5">
                 {BOTONES_TIMESTAMP.map((b) => {
                   const count = countByEvento(b.label);
                   const isPulsing = pulseButtonKey === b.label;
                   return (
-                    <div key={b.label} className="relative inline-block">
+                    <div key={b.label} className="relative">
                       {count > 0 && (
-                        <span
-                          className="absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-blue-500 px-1.5 text-xs font-bold text-white"
-                          aria-label={`${count} vez/veces registrado`}
-                        >
+                        <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white">
                           {count}
                         </span>
                       )}
                       <button
                         type="button"
                         onClick={() => agregarTimestamp(b.label)}
-                        className={`relative min-h-[44px] touch-manipulation rounded-xl border-2 px-3 py-2 text-sm font-medium transition active:scale-[0.98] ${b.color} ${isPulsing ? "animate-button-flash" : ""}`}
+                        className={`relative min-h-[40px] w-full touch-manipulation rounded-lg border-2 px-2 py-1.5 text-xs font-medium transition active:scale-[0.98] ${b.color} ${isPulsing ? "animate-button-flash" : ""}`}
                       >
                         {b.label}
                       </button>
@@ -609,25 +684,18 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
                   );
                 })}
               </div>
-              <div className="flex gap-2 flex-wrap">
-                <Input value={timestampInput} onChange={(e) => setTimestampInput(e.target.value)} placeholder="Otro evento" className={`flex-1 min-w-[140px] ${INPUT_DARK}`} />
-                <Button
-                  type="button"
-                  onClick={() => agregarTimestamp()}
-                  className={`min-h-[44px] rounded-xl border-2 border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700 focus:ring-blue-500 ${pulseButtonKey === "_custom" ? "animate-button-flash" : ""}`}
-                >
-                  Registrar hora
+              <div className="flex gap-1.5">
+                <Input value={timestampInput} onChange={(e) => setTimestampInput(e.target.value)} placeholder="Otro evento" className={`flex-1 min-w-0 ${INPUT_DARK}`} />
+                <Button type="button" onClick={() => agregarTimestamp()} className={`min-h-[40px] shrink-0 rounded-lg border-2 border-slate-600 bg-slate-800 text-slate-100 text-xs hover:bg-slate-700 ${pulseButtonKey === "_custom" ? "animate-button-flash" : ""}`}>
+                  Registrar
                 </Button>
               </div>
               <div>
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Historial de Tiempos</p>
-                {timestampEventos.length === 0 ? <p className="rounded-lg bg-slate-800/60 px-3 py-2 text-sm text-slate-500">Sin eventos</p> : (
-                  <ul className="space-y-1.5 text-sm">
+                <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">Historial</p>
+                {timestampEventos.length === 0 ? <p className="rounded bg-slate-800/60 px-2 py-1.5 text-xs text-slate-500">Sin eventos</p> : (
+                  <ul className="max-h-24 space-y-0.5 overflow-y-auto text-xs">
                     {timestampEventos.map((ev, i) => (
-                      <li
-                        key={`${ev.hora}-${i}`}
-                        className={`flex items-center gap-2 rounded-lg bg-slate-800/60 px-3 py-2 text-slate-200 ${ev.hora === lastAddedHora ? "animate-timestamp-in" : ""}`}
-                      >
+                      <li key={`${ev.hora}-${i}`} className={`flex items-center gap-1.5 rounded bg-slate-800/60 px-2 py-1 text-slate-200 ${ev.hora === lastAddedHora ? "animate-timestamp-in" : ""}`}>
                         <span className="font-mono text-slate-400">{new Date(ev.hora).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</span>
                         <span className="text-slate-400">—</span><span>{ev.evento}</span>
                       </li>
@@ -641,33 +709,35 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
       case 10:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg text-slate-100">Paciente</CardTitle>
+            <CardHeader className="p-3 pb-1">
+              <CardTitle className="text-base text-slate-100">Paciente</CardTitle>
+              <p className="text-xs text-slate-400">Datos y diagnóstico CIE-11</p>
             </CardHeader>
-            <CardContent className="grid gap-4 sm:grid-cols-2">
-              <div><Label htmlFor="paciente_id" className={LABEL_DARK}>ID / Nº historia</Label><Input id="paciente_id" value={pacienteId} onChange={(e) => setPacienteId(e.target.value)} placeholder="Obligatorio" className={INPUT_DARK} /></div>
-              <div><Label htmlFor="nombre_paciente" className={LABEL_DARK}>Nombre</Label><Input id="nombre_paciente" value={nombrePaciente} onChange={(e) => setNombrePaciente(e.target.value)} className={INPUT_DARK} /></div>
-              <div><Label htmlFor="dni" className={LABEL_DARK}>DNI</Label><Input id="dni" value={dni} onChange={(e) => setDni(e.target.value)} className={INPUT_DARK} /></div>
-              <div className="sm:col-span-2"><Label htmlFor="sintomas" className={LABEL_DARK}>Observaciones / Motivo</Label><Input id="sintomas" value={sintomasTexto} onChange={(e) => setSintomasTexto(e.target.value)} placeholder="Motivo de atención" className={INPUT_DARK} /></div>
+            <CardContent className="grid grid-cols-2 gap-2 p-3 pt-0">
+              <div><Label htmlFor="paciente_id" className={LABEL_DARK}>ID / Historia</Label><Input id="paciente_id" value={pacienteId} onChange={(e) => setPacienteId(e.target.value)} placeholder="Obligatorio" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div><Label htmlFor="nombre_paciente" className={LABEL_DARK}>Nombre</Label><Input id="nombre_paciente" value={nombrePaciente} onChange={(e) => setNombrePaciente(e.target.value)} className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div><Label htmlFor="dni" className={LABEL_DARK}>DNI</Label><Input id="dni" value={dni} onChange={(e) => setDni(e.target.value)} className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div className="col-span-2"><Label htmlFor="sintomas" className={LABEL_DARK}>Motivo / Observaciones</Label><Input id="sintomas" value={sintomasTexto} onChange={(e) => setSintomasTexto(e.target.value)} placeholder="Motivo de atención" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+              <div className="col-span-2">
+                <Label htmlFor="diagnostico-presuntivo" className={LABEL_DARK}>Diagnóstico presuntivo <span className="text-amber-400">*</span></Label>
+                <DiagnosticoAutocomplete value={diagnosticoPresuntivo} onChange={setDiagnosticoPresuntivo} placeholder="Buscar (Infarto, ACV…)" className="mt-0.5" required />
+              </div>
             </CardContent>
           </Card>
         );
       case 11: {
-        if (pdfListo) {
+        if (atencionFinalizada) {
           return (
             <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-lg text-slate-100">Reporte finalizado</CardTitle>
-                <p className="text-sm text-slate-400">PDF generado y guardado en el dispositivo.</p>
+              <CardHeader className="p-3 pb-1">
+                <CardTitle className="text-base text-slate-100">Atención finalizada</CardTitle>
+                <p className="text-xs text-slate-400">Datos en central. Opcional: compartir o descargar PDF.</p>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <p className="text-slate-300 text-sm">Puede verlo y compartirlo desde Historial.</p>
-                <Button
-                  type="button"
-                  onClick={handleNuevaAtencionClick}
-                  className={`mt-4 w-full min-h-[56px] text-lg ${BTN_GRADIENT} disabled:opacity-70`}
-                  style={BTN_GRADIENT_STYLE}
-                >
+              <CardContent className="flex flex-col gap-2 p-3 pt-0">
+                <Button type="button" onClick={handleCompartirPDF} disabled={compartirPdfLoading} className="min-h-[40px] w-full rounded-lg border-2 border-slate-500 bg-slate-700/80 text-sm text-slate-100 hover:bg-slate-600 disabled:opacity-60">
+                  {compartirPdfLoading ? "Generando…" : canUseShare() ? "Compartir PDF" : "Descargar PDF"}
+                </Button>
+                <Button type="button" onClick={handleNuevaAtencionClick} className={`min-h-[44px] w-full text-sm ${BTN_GRADIENT}`} style={BTN_GRADIENT_STYLE}>
                   NUEVA ATENCIÓN
                 </Button>
               </CardContent>
@@ -675,43 +745,30 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
           );
         }
         const faltantes: string[] = [];
-        if (!horaInicio?.trim()) faltantes.push("Hora de inicio de atención");
-        if (!pacienteId?.trim()) faltantes.push("ID / Nº historia del paciente");
-        if (!nombrePaciente?.trim() && !dni?.trim()) faltantes.push("Nombre o DNI del paciente");
+        if (!horaInicio?.trim()) faltantes.push("Hora de inicio");
+        if (!pacienteId?.trim()) faltantes.push("ID / Nº historia");
+        if (!nombrePaciente?.trim() && !dni?.trim()) faltantes.push("Nombre o DNI");
         const tieneTA = (bpSystolic?.trim() && bpDiastolic?.trim()) || (Number(bpSystolic) > 0 && Number(bpDiastolic) > 0);
         if (!tieneTA) faltantes.push("Tensión arterial");
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg text-slate-100">Enviar a central</CardTitle>
-              <p className="text-sm text-slate-400">Se sincronizará el estado con central y se generará el PDF localmente.</p>
+            <CardHeader className="p-3 pb-1">
+              <CardTitle className="text-base text-slate-100">Finalizar atención</CardTitle>
+              <p className="text-xs text-slate-400">Paciente: {pacienteId || "—"} · Inicio: {horaInicio ? new Date(horaInicio).toLocaleTimeString("es-ES") : "—"}</p>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-slate-300 text-sm">Paciente: {pacienteId || "—"} · Inicio: {horaInicio ? new Date(horaInicio).toLocaleTimeString("es-ES") : "—"}</p>
+            <CardContent className="p-3 pt-0 space-y-2">
               {syncError && (
-                <div className="rounded-lg border border-amber-500/70 bg-amber-500/15 px-3 py-2 text-sm text-amber-200">
-                  Guardado localmente. Error de sincronización con la nube. El PDF se genera igual.
+                <div className="rounded border border-amber-500/70 bg-amber-500/15 px-2 py-1.5 text-xs text-amber-200">
+                  No se pudo enviar. Revise conexión e intente de nuevo.
                 </div>
               )}
               {faltantes.length > 0 && (
-                <div className="rounded-lg border border-amber-500/70 bg-amber-500/15 px-3 py-2 text-sm text-amber-200">
-                  <p className="font-medium text-amber-100">Faltan datos críticos (recomendado rellenar antes de enviar):</p>
-                  <ul className="mt-1 list-inside list-disc text-amber-200/90">
-                    {faltantes.map((f, i) => (
-                      <li key={i}>{f}</li>
-                    ))}
-                  </ul>
+                <div className="rounded border border-amber-500/70 bg-amber-500/15 px-2 py-1.5 text-xs text-amber-200">
+                  <p className="font-medium text-amber-100">Faltan (recomendado):</p>
+                  <ul className="mt-0.5 list-inside list-disc text-amber-200/90">{faltantes.map((f, i) => <li key={i}>{f}</li>)}</ul>
                 </div>
               )}
-              <Button
-                type="button"
-                onClick={handleEnviarACentral}
-                disabled={pdfLoading}
-                className={`mt-4 w-full min-h-[56px] text-lg ${BTN_GRADIENT} disabled:opacity-70`}
-                style={BTN_GRADIENT_STYLE}
-              >
-                {pdfLoading ? "Generando PDF…" : "ENVIAR A CENTRAL / FINALIZAR"}
-              </Button>
+              <p className="text-xs text-slate-400">Use el botón <strong className="text-slate-300">FINALIZAR ATENCIÓN</strong> abajo para guardar en central, generar PDF y reiniciar.</p>
             </CardContent>
           </Card>
         );
@@ -725,78 +782,68 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion }: ChecklistXABCDEPr
   const fabPulsing = pulseButtonKey === "Registro RCP";
 
   return (
-    <form onSubmit={handleSubmit} className="relative flex min-h-[70vh] flex-col">
+    <form onSubmit={handleSubmit} className="relative flex min-h-[50vh] flex-col">
       <ToastTimestamp message={toastMessage} onDismiss={() => setToastMessage(null)} />
 
-      {/* FAB: Registro RCP — timestamp sin salir de la pantalla */}
-      <div className="fixed bottom-24 right-4 z-50 flex flex-col items-center">
+      {/* FAB: Registro RCP */}
+      <div className="fixed bottom-20 right-3 z-40">
         {rcpCount > 0 && (
-          <span
-            className="absolute -right-1 -top-1 z-10 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-blue-500 px-1.5 text-xs font-bold text-white"
-            aria-label={`RCP registrado ${rcpCount} vez/veces`}
-          >
+          <span className="absolute -right-0.5 -top-0.5 z-10 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white" aria-label={`RCP ${rcpCount}`}>
             {rcpCount}
           </span>
         )}
         <button
           type="button"
           onClick={() => agregarTimestamp("Registro RCP")}
-          className={`relative flex min-h-[52px] min-w-[52px] touch-manipulation items-center justify-center rounded-full bg-red-600 px-4 py-3 text-xs font-bold uppercase text-white shadow-lg transition active:scale-95 hover:bg-red-500 ${fabPulsing ? "animate-button-flash" : ""}`}
-          aria-label="Registrar evento RCP con hora actual"
+          className={`relative flex h-11 w-11 touch-manipulation items-center justify-center rounded-full bg-red-600 text-[10px] font-bold uppercase text-white shadow-lg transition active:scale-95 hover:bg-red-500 ${fabPulsing ? "animate-button-flash" : ""}`}
+          aria-label="Registrar RCP"
         >
-          Registro RCP
+          RCP
         </button>
       </div>
 
-      {/* Barra de progreso */}
-      <div className="mb-4 shrink-0">
-        <p className="mb-1 text-xs font-medium text-slate-400">{progressText}</p>
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+      {/* Barra de progreso compacta */}
+      <div className="mb-2 shrink-0">
+        <p className="mb-0.5 text-[10px] font-medium text-slate-400">{progressText}</p>
+        <div className="h-1 w-full overflow-hidden rounded-full bg-slate-800">
           <div className="h-full rounded-full transition-all duration-300" style={{ width: `${progressPct}%`, background: `linear-gradient(90deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)` }} />
         </div>
       </div>
 
-      {/* Contenido del paso actual */}
-      <div className="min-h-0 flex-1 overflow-auto pb-4">{renderStepContent()}</div>
+      {/* Contenido con padding inferior para no quedar bajo la barra fija */}
+      <div className="min-h-0 flex-1 overflow-auto pb-24">{renderStepContent()}</div>
 
-      {/* Navegación táctica: botones con degradado rojo-azul */}
-      <div className="mt-auto flex shrink-0 gap-3 border-t pt-4" style={{ borderColor: "rgba(37, 99, 235, 0.25)" }}>
+      {/* Barra inferior fija: siempre visible, cero scroll para acceder al botón */}
+      <div
+        className="fixed bottom-0 left-0 right-0 z-30 flex gap-2 border-t px-3 py-2 pb-[env(safe-area-inset-bottom,0.5rem)]"
+        style={{ backgroundColor: CARD_BG, borderColor: "rgba(37, 99, 235, 0.25)" }}
+      >
         <Button
           type="button"
           onClick={goBack}
           disabled={currentStep === 0}
-          className="min-h-[52px] flex-1 touch-manipulation rounded-xl border-2 text-base font-semibold text-slate-100 transition active:scale-[0.98] disabled:opacity-40"
-          style={{ borderColor: "rgba(37, 99, 235, 0.5)", backgroundColor: CARD_BG }}
+          className="min-h-[44px] flex-1 touch-manipulation rounded-lg border-2 text-sm font-semibold text-slate-100 transition active:scale-[0.98] disabled:opacity-40"
+          style={{ borderColor: "rgba(37, 99, 235, 0.5)", backgroundColor: "rgba(15, 23, 42, 0.95)" }}
         >
           ANTERIOR
         </Button>
         {currentStep < TOTAL_STEPS - 1 ? (
-          <Button
-            type="button"
-            onClick={goNext}
-            className={`flex-1 rounded-xl text-white ${BTN_GRADIENT} ${isGlasgowStepComplete ? "opacity-95" : ""}`}
-            style={BTN_GRADIENT_STYLE}
-          >
+          <Button type="button" onClick={goNext} className={`min-h-[44px] flex-1 text-sm text-white ${BTN_GRADIENT} ${isGlasgowStepComplete ? "opacity-95" : ""}`} style={BTN_GRADIENT_STYLE}>
             SIGUIENTE
           </Button>
-        ) : pdfListo ? (
-          <Button
-            type="button"
-            onClick={handleNuevaAtencionClick}
-            className={`min-h-[56px] flex-1 rounded-xl text-lg font-semibold text-white ${BTN_GRADIENT}`}
-            style={BTN_GRADIENT_STYLE}
-          >
+        ) : atencionFinalizada ? (
+          <Button type="button" onClick={handleNuevaAtencionClick} className={`min-h-[44px] flex-1 text-sm font-semibold text-white ${BTN_GRADIENT}`} style={BTN_GRADIENT_STYLE}>
             NUEVA ATENCIÓN
           </Button>
         ) : (
           <Button
             type="button"
-            onClick={handleEnviarACentral}
-            disabled={pdfLoading}
-            className={`min-h-[56px] flex-1 rounded-xl text-lg font-semibold text-white ${BTN_GRADIENT} disabled:opacity-70`}
+            onClick={handleFinalizarAtencion}
+            disabled={finalizando}
+            className={`min-h-[44px] flex-1 text-sm font-semibold text-white ${BTN_GRADIENT} disabled:opacity-70`}
             style={BTN_GRADIENT_STYLE}
           >
-            {pdfLoading ? "Generando PDF…" : "ENVIAR A CENTRAL / FINALIZAR"}
+            {finalizando ? "Enviando…" : "FINALIZAR ATENCIÓN"}
           </Button>
         )}
       </div>

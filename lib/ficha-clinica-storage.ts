@@ -1,3 +1,5 @@
+import type { DiagnosticoCIE } from "@/lib/diagnosticos-emergencias";
+
 /**
  * Clave de localStorage para la Ficha Clínica Digital (persistencia al cerrar la app).
  */
@@ -29,6 +31,8 @@ export interface FichaClinicaPersistida {
   timestamp_eventos: TimestampEvento[];
   /** Paso actual del stepper (0 = inicio, 1–6 = XABCDE, 7 = signos, 8 = Glasgow, 9 = timestamps, 10 = paciente, 11 = enviar). */
   currentStep: number;
+  /** Diagnóstico presuntivo con CIE-11 (término común + código + descripción técnica). */
+  diagnostico?: DiagnosticoCIE | null;
 }
 
 const defaultPersistida: FichaClinicaPersistida = {
@@ -50,6 +54,7 @@ const defaultPersistida: FichaClinicaPersistida = {
   glasgowM: 0,
   timestamp_eventos: [],
   currentStep: 0,
+  diagnostico: null,
 };
 
 export function loadFichaClinica(): FichaClinicaPersistida | null {

@@ -3,14 +3,15 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getOperadorId, getUnidadId, clearOperadorId, syncFromProfile } from "@/lib/operador-storage";
+import { getOperadorId, getUnidadId, clearOperadorId } from "@/lib/operador-storage";
 import { clearFichaClinica } from "@/lib/ficha-clinica-storage";
 import { removeIntervencionFromFirebase } from "@/lib/firebase-intervenciones";
 import { validateManagerPin } from "@/lib/manager-auth";
-import { setManagerSession } from "@/lib/manager-session";
+import { setManagerSession, hasManagerSession } from "@/lib/manager-session";
 import { LogoEkg } from "@/components/logo-ekg";
+import { Capacitor } from "@capacitor/core";
 import { useAuth } from "@/lib/auth-context";
-import { signIn, signUp, signOut, setUserProfile } from "@/lib/firebase-auth";
+import { signOut, signInWithGoogle, GOOGLE_WEB_CLIENT_ID } from "@/lib/firebase-auth";
 import {
   Dialog,
   DialogContent,
@@ -39,79 +40,67 @@ function LandingFallback(): React.ReactElement {
 function LandingPage(): React.ReactElement {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, profile, loading, refreshProfile } = useAuth();
+  const { user, profile, authorizedUser, loading, isUnauthorized, authError: contextAuthError } = useAuth();
   const hasRedirected = React.useRef(false);
 
+  // Si el usuario está logueado y autorizado → redirección a Nueva Atención (por defecto)
   React.useEffect(() => {
-    if (loading || !user || !profile) return;
-    if (searchParams.get("from") === "nav") return;
+    if (!loading && isUnauthorized) {
+      router.replace("/acceso-pendiente");
+      return;
+    }
+    if (loading || !user || !profile || !authorizedUser) return;
     if (hasRedirected.current) return;
+    const rol = authorizedUser.rol;
+    const isManagerEmail = MANAGER_EMAILS.length > 0 && (user.email ?? "").trim().toLowerCase() && MANAGER_EMAILS.includes((user.email ?? "").trim().toLowerCase());
+    const hasManager = hasManagerSession() || isManagerEmail || rol === "ADMIN" || rol === "DOCTOR";
     hasRedirected.current = true;
-    const email = (user.email ?? "").trim().toLowerCase();
-    if (MANAGER_EMAILS.length > 0 && email && MANAGER_EMAILS.includes(email)) {
-      setManagerSession();
-      router.replace("/manager");
-    } else {
+    if (hasManager) setManagerSession();
+    if (searchParams.get("from") !== "nav") {
       router.replace("/atencion");
     }
-  }, [loading, user, profile, router, searchParams]);
+  }, [loading, user, profile, authorizedUser, isUnauthorized, router, searchParams]);
 
-  const [email, setEmail] = React.useState("");
-  const [password, setPassword] = React.useState("");
-  const [authError, setAuthError] = React.useState("");
+  // Fallback: si tras login seguimos en "/", forzar redirección a Nueva Atención
+  React.useEffect(() => {
+    if (!user || !profile || !authorizedUser || loading) return;
+    const t = setTimeout(() => {
+      const rol = authorizedUser.rol;
+      const hasManager = hasManagerSession() || rol === "ADMIN" || rol === "DOCTOR";
+      if (hasManager) setManagerSession();
+      router.replace("/atencion");
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [user, profile, authorizedUser, loading, router]);
+
+  const [loginError, setLoginError] = React.useState("");
   const [authLoading, setAuthLoading] = React.useState(false);
-  const [isRegister, setIsRegister] = React.useState(false);
-
-  const [nombre, setNombre] = React.useState("");
-  const [apellido, setApellido] = React.useState("");
-  const [matricula, setMatricula] = React.useState("");
-  const [profileError, setProfileError] = React.useState("");
-  const [profileLoading, setProfileLoading] = React.useState(false);
 
   const [modalGestionOpen, setModalGestionOpen] = React.useState(false);
   const [pinGestion, setPinGestion] = React.useState("");
   const [pinError, setPinError] = React.useState(false);
 
-  const handleAuthSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthError("");
+  const accesoDenegado = searchParams.get("acceso") === "denegado";
+
+  const handleGoogleSignIn = async () => {
+    setLoginError("");
     setAuthLoading(true);
     try {
-      if (isRegister) {
-        await signUp(email.trim(), password);
-      } else {
-        await signIn(email.trim(), password);
+      if (Capacitor.isNativePlatform()) {
+        const { GoogleAuth } = await import("@codetrix-studio/capacitor-google-auth");
+        if (typeof GoogleAuth.initialize === "function") {
+          await GoogleAuth.initialize({ clientId: GOOGLE_WEB_CLIENT_ID } as Parameters<typeof GoogleAuth.initialize>[0]);
+        }
       }
+      await signInWithGoogle();
     } catch (err: unknown) {
-      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: string }).message) : "Error al iniciar sesión";
-      setAuthError(msg);
+      const msg = err && typeof err === "object" && "message" in err ? String((err as { message: string }).message) : String(err);
+      const code = err && typeof err === "object" && "code" in err ? String((err as { code: string }).code) : "";
+      const fullMsg = code ? `[${code}] ${msg}` : msg;
+      setLoginError(fullMsg);
+      if (typeof alert === "function") alert(fullMsg);
     } finally {
       setAuthLoading(false);
-    }
-  };
-
-  const handleProfileSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user) return;
-    if (!nombre.trim() || !apellido.trim() || !matricula.trim()) {
-      setProfileError("Complete todos los campos.");
-      return;
-    }
-    setProfileError("");
-    setProfileLoading(true);
-    try {
-      await setUserProfile(user.uid, {
-        email: user.email ?? "",
-        nombre: nombre.trim(),
-        apellido: apellido.trim(),
-        matricula: matricula.trim(),
-      });
-      syncFromProfile({ nombre: nombre.trim(), apellido: apellido.trim(), matricula: matricula.trim() });
-      await refreshProfile();
-    } catch {
-      setProfileError("No se pudo guardar el perfil. Intente de nuevo.");
-    } finally {
-      setProfileLoading(false);
     }
   };
 
@@ -155,6 +144,31 @@ function LandingPage(): React.ReactElement {
     );
   }
 
+  // No autorizado: mensaje claro y botón (evita pantalla en blanco si falla la redirección)
+  if (isUnauthorized && user) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center px-6 font-sans text-slate-100" style={{ backgroundColor: BG_DARK }}>
+        <div className="flex max-w-md flex-col items-center rounded-2xl border border-red-500/40 bg-slate-800/50 p-8 shadow-xl">
+          <h1 className="mb-2 text-center text-xl font-bold text-red-200">Usuario no autorizado</h1>
+          <p className="mb-6 text-center text-sm text-slate-400">
+            Su correo no está en la lista de usuarios autorizados.
+          </p>
+          <button
+            type="button"
+            onClick={async () => {
+              await signOut();
+              router.replace("/?acceso=denegado");
+            }}
+            className="min-h-[52px] w-full rounded-xl px-6 py-3 text-base font-semibold text-white transition disabled:opacity-60"
+            style={{ backgroundColor: RED_EMERGENCY }}
+          >
+            Volver al inicio
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <div className="flex min-h-screen flex-col font-sans text-slate-100" style={{ backgroundColor: BG_DARK }}>
@@ -172,69 +186,45 @@ function LandingPage(): React.ReactElement {
           </button>
         </header>
         <main className="flex flex-1 flex-col items-center justify-center px-6 py-12">
-          <div className="mb-6 flex items-center justify-center">
-            <LogoEkg className="h-28 w-28 drop-shadow-[0_0_24px_rgba(37,99,235,0.4)]" />
+          <div className="mb-8 flex items-center justify-center">
+            <LogoEkg className="h-28 w-28 drop-shadow-[0_0_24px_rgba(37,99,235,0.4)] animate-pulse [animation-duration:2s]" />
           </div>
           <h1 className="mb-2 text-center text-2xl font-bold tracking-tight text-slate-100 sm:text-3xl">
             AMBULANCIA PRO
           </h1>
-          <p className="mb-10 text-sm text-slate-400">Acceso profesional</p>
+          <p className="mb-2 text-center text-sm font-medium uppercase tracking-wide text-slate-400">
+            Acceso Profesional
+          </p>
+          <p className="mb-10 text-center text-sm text-slate-500">
+            Iniciá sesión con tu cuenta de Google autorizada
+          </p>
 
-          <form onSubmit={handleAuthSubmit} className="w-full max-w-sm space-y-5">
-            <div>
-              <label htmlFor="email" className="mb-2 block text-sm font-medium text-slate-300">
-                Email
-              </label>
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => { setEmail(e.target.value); setAuthError(""); }}
-                placeholder="correo@ejemplo.com"
-                className="w-full min-h-[52px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-[#0f172a]"
-                autoComplete="email"
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="password" className="mb-2 block text-sm font-medium text-slate-300">
-                Contraseña
-              </label>
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => { setPassword(e.target.value); setAuthError(""); }}
-                placeholder="••••••••"
-                className="w-full min-h-[52px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-[#0f172a]"
-                autoComplete={isRegister ? "new-password" : "current-password"}
-                required
-              />
-            </div>
-            {authError && (
-              <p className="rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-sm text-red-200">
-                {authError}
-              </p>
-            )}
-            <button
-              type="submit"
-              disabled={authLoading}
-              className="relative w-full min-h-[58px] touch-manipulation rounded-xl px-6 py-4 text-lg font-bold text-white transition active:scale-[0.98] disabled:opacity-50"
-              style={{
-                background: `linear-gradient(135deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)`,
-                boxShadow: "0 0 24px rgba(37, 99, 235, 0.5), 0 4px 12px rgba(0,0,0,0.3)",
-              }}
-            >
-              {authLoading ? "Espere…" : isRegister ? "REGISTRARSE" : "INICIAR SESIÓN"}
-            </button>
+          {accesoDenegado && (
+            <p className="mb-4 rounded-lg border border-red-800 bg-red-900/30 px-4 py-3 text-center text-sm text-red-200">
+              Usuario no autorizado. Su correo no está en la lista de usuarios autorizados.
+            </p>
+          )}
+          {(contextAuthError || loginError) && (
+            <p className="mb-4 rounded-lg border border-red-800 bg-red-900/30 px-4 py-3 text-center text-sm text-red-200">
+              {contextAuthError || loginError}
+            </p>
+          )}
+          <div className="w-full max-w-sm space-y-4">
             <button
               type="button"
-              onClick={() => { setIsRegister(!isRegister); setAuthError(""); }}
-              className="w-full text-center text-sm text-slate-400 hover:text-slate-300 underline"
+              onClick={handleGoogleSignIn}
+              disabled={authLoading}
+              className="flex w-full min-h-[56px] touch-manipulation items-center justify-center gap-3 rounded-xl border-2 border-slate-600 bg-white px-6 py-3 text-base font-semibold text-slate-800 transition active:scale-[0.98] hover:bg-slate-100 disabled:opacity-60 disabled:pointer-events-none"
             >
-              {isRegister ? "Ya tengo cuenta" : "Crear cuenta nueva"}
+              <svg className="h-6 w-6" viewBox="0 0 24 24" aria-hidden>
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+              </svg>
+              Continuar con Google
             </button>
-          </form>
+          </div>
         </main>
         <footer className="border-t border-slate-800 px-4 py-5 text-center" style={{ borderColor: "rgba(51, 65, 85, 0.6)" }}>
           <p className="text-xs text-slate-500">Sistema de Gestión de Emergencias V1.0</p>
@@ -288,69 +278,11 @@ function LandingPage(): React.ReactElement {
     }
   }
 
-  if (!profile) {
+  if (user && !profile) {
     return (
-      <div className="flex min-h-screen flex-col font-sans text-slate-100" style={{ backgroundColor: BG_DARK }}>
-        <main className="flex flex-1 flex-col items-center justify-center px-6 py-12">
-          <div className="mb-6 flex items-center justify-center">
-            <LogoEkg className="h-24 w-24 drop-shadow-[0_0_24px_rgba(37,99,235,0.4)]" />
-          </div>
-          <h1 className="mb-2 text-center text-xl font-bold text-slate-100">Completar perfil profesional</h1>
-          <p className="mb-8 text-sm text-slate-400">Primera vez: indique nombre, apellido y matrícula.</p>
-
-          <form onSubmit={handleProfileSubmit} className="w-full max-w-sm space-y-5">
-            <div>
-              <label htmlFor="nombre" className="mb-2 block text-sm font-medium text-slate-300">Nombre</label>
-              <input
-                id="nombre"
-                type="text"
-                value={nombre}
-                onChange={(e) => setNombre(e.target.value)}
-                placeholder="Ej: Juan"
-                className="w-full min-h-[52px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="apellido" className="mb-2 block text-sm font-medium text-slate-300">Apellido</label>
-              <input
-                id="apellido"
-                type="text"
-                value={apellido}
-                onChange={(e) => setApellido(e.target.value)}
-                placeholder="Ej: García"
-                className="w-full min-h-[52px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                required
-              />
-            </div>
-            <div>
-              <label htmlFor="matricula" className="mb-2 block text-sm font-medium text-slate-300">Número de Matrícula</label>
-              <input
-                id="matricula"
-                type="text"
-                value={matricula}
-                onChange={(e) => setMatricula(e.target.value)}
-                placeholder="Ej: M-042"
-                className="w-full min-h-[52px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-3 text-base text-slate-100 placeholder:text-slate-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                required
-              />
-            </div>
-            {profileError && (
-              <p className="rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-sm text-red-200">{profileError}</p>
-            )}
-            <button
-              type="submit"
-              disabled={profileLoading}
-              className="w-full min-h-[58px] rounded-xl px-6 py-4 text-lg font-bold text-white transition disabled:opacity-50"
-              style={{
-                background: `linear-gradient(135deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)`,
-                boxShadow: "0 0 24px rgba(37, 99, 235, 0.5), 0 4px 12px rgba(0,0,0,0.3)",
-              }}
-            >
-              {profileLoading ? "Guardando…" : "GUARDAR Y CONTINUAR"}
-            </button>
-          </form>
-        </main>
+      <div className="flex min-h-screen flex-col items-center justify-center font-sans text-slate-100" style={{ backgroundColor: BG_DARK }}>
+        <LogoEkg className="h-20 w-20 animate-pulse opacity-80" />
+        <p className="mt-4 text-sm text-slate-400">Comprobando autorización…</p>
       </div>
     );
   }

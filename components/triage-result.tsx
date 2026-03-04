@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { clearFichaClinica } from "@/lib/ficha-clinica-storage";
-import { getOperadorId, getUnidadId } from "@/lib/operador-storage";
+import { getOperadorId, getUnidadId, getAtendidoPor } from "@/lib/operador-storage";
 import { syncIntervencionToFirebase, removeIntervencionFromFirebase } from "@/lib/firebase-intervenciones";
 import {
   savePendingFirebaseSync,
@@ -24,7 +24,14 @@ import {
 import { generateAndSharePDF } from "@/lib/share-pdf";
 import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
 import { pushAtencionToFirebase } from "@/lib/firebase-atenciones";
+import { pushAtencionToFirestore } from "@/lib/firestore-atenciones";
 import type { NivelGravedad, NivelTriageNombre, RegistroTriage } from "@/lib/types";
+import {
+  DiagnosticoComboboxTriage,
+  diagnosticoToNombreCie11,
+  type DiagnosticoTriageValue,
+} from "@/components/diagnostico-combobox-triage";
+import { requiereNivelRojo } from "@/constants/diagnostics";
 
 const RED_EMERGENCY = "#dc2626";
 const BLUE_MEDICAL = "#2563eb";
@@ -65,13 +72,29 @@ export interface TriageResultProps {
   onNuevoTriage?: () => void;
   /** Si true, usa estilos dark mode (ficha clínica ambulancia). */
   darkMode?: boolean;
+  /** Callback para sugerir nivel (ej. Nivel 5 Rojo al seleccionar Paro Cardiorrespiratorio). */
+  onSugerirNivel?: (nivel: NivelGravedad) => void;
 }
 
-export function TriageResult({ registro, onNuevoTriage, darkMode = true }: TriageResultProps): React.ReactElement {
+export function TriageResult({
+  registro,
+  onNuevoTriage,
+  darkMode = true,
+  onSugerirNivel,
+}: TriageResultProps): React.ReactElement {
   const [openConfirmNuevoPaciente, setOpenConfirmNuevoPaciente] = React.useState(false);
   const [guardadoExitoso, setGuardadoExitoso] = React.useState(false);
   const [finalizando, setFinalizando] = React.useState(false);
   const [mensajeExito, setMensajeExito] = React.useState<string | null>(null);
+  const [diagnosticoCombobox, setDiagnosticoCombobox] = React.useState<DiagnosticoTriageValue>(() => {
+    const t = registro.diagnostico_presuntivo?.trim();
+    return t ? { tipo: "libre" as const, texto: t } : null;
+  });
+
+  const impresionClinica = React.useMemo(
+    () => diagnosticoToNombreCie11(diagnosticoCombobox),
+    [diagnosticoCombobox]
+  );
 
   const handleFinalizarYEnviar = React.useCallback(async () => {
     setFinalizando(true);
@@ -92,15 +115,19 @@ export function TriageResult({ registro, onNuevoTriage, darkMode = true }: Triag
       if (operadorId || unidadId) savePendingFirebaseSync(payload);
     }
 
-    const data = registroToReportSummaryData(registro);
+    const data = registroToReportSummaryData(
+      registro,
+      impresionClinica ? { nombre: impresionClinica.nombre, cie11: impresionClinica.cie11 } : null
+    );
     try {
-      const { fileUri } = await generateAndSharePDF(data);
+      const { fileUri, reportId } = await generateAndSharePDF(data);
       const entry = addToHistorialPdf(data, {
         operadorId: operadorId || undefined,
         unidadId: unidadId || undefined,
         fileUri,
+        id: reportId,
       });
-      pushAtencionToFirebase({
+      const atencionEntry = {
         id: entry.id,
         createdAt: entry.createdAt,
         nombrePaciente: entry.nombrePaciente,
@@ -108,7 +135,15 @@ export function TriageResult({ registro, onNuevoTriage, darkMode = true }: Triag
         operadorId: entry.operadorId,
         unidadId: entry.unidadId,
         data: entry.data,
-      });
+        diagnostico_codigo: impresionClinica?.cie11,
+      };
+      await pushAtencionToFirebase(atencionEntry, impresionClinica ?? undefined);
+      const paramedicoNombre = getAtendidoPor() || operadorId || "Paramédico";
+      try {
+        await pushAtencionToFirestore(atencionEntry, { paramedicoNombre });
+      } catch (fsErr) {
+        console.warn("[Firestore] Error guardando en atenciones:", fsErr);
+      }
       setMensajeExito("Reporte Guardado Exitosamente");
       setGuardadoExitoso(true);
     } catch (e) {
@@ -117,14 +152,25 @@ export function TriageResult({ registro, onNuevoTriage, darkMode = true }: Triag
     } finally {
       setFinalizando(false);
     }
-  }, [registro]);
+  }, [registro, impresionClinica]);
 
   const handleConfirmNuevoPaciente = () => {
     removeIntervencionFromFirebase(getUnidadId() || getOperadorId() || "");
     clearFichaClinica();
+    setDiagnosticoCombobox(null);
     setOpenConfirmNuevoPaciente(false);
     onNuevoTriage?.();
   };
+
+  const handleDiagnosticoChange = React.useCallback(
+    (v: DiagnosticoTriageValue) => {
+      setDiagnosticoCombobox(v);
+      if (v?.tipo === "codificado" && requiereNivelRojo(v.label) && onSugerirNivel && registro.nivel_gravedad < 5) {
+        onSugerirNivel(5);
+      }
+    },
+    [onSugerirNivel, registro.nivel_gravedad]
+  );
 
   const info = ETIQUETAS_GRAVEDAD[registro.nivel_gravedad];
   const nivelNombre = registro.nivel ?? `Gravedad ${registro.nivel_gravedad}: ${info.label}`;
@@ -246,13 +292,28 @@ export function TriageResult({ registro, onNuevoTriage, darkMode = true }: Triag
               </dl>
             </div>
           ) : null}
-          {registro.diagnostico_presuntivo && (
-            <div className={boxClass}>
-              <p className={`text-xs font-medium uppercase tracking-wide ${labelClass}`}>Diagnóstico presuntivo</p>
-              <p className={`mt-2 ${valueClass}`}>{registro.diagnostico_presuntivo}</p>
-              <p className={`mt-3 text-xs ${disclaimerClass}`}>{DISCLAIMER_LEGAL}</p>
+          <div className={boxClass}>
+            <p className={`text-xs font-medium uppercase tracking-wide ${labelClass}`}>
+              Diagnóstico / Impresión clínica <span className="text-amber-400">(obligatorio)</span>
+            </p>
+            <p className="mt-1 text-xs text-slate-500">Busque en la lista o escriba libre (se marcará como no estandarizado).</p>
+            <div className="mt-2">
+              <DiagnosticoComboboxTriage
+                value={diagnosticoCombobox}
+                onChange={handleDiagnosticoChange}
+                placeholder="Ej. Infarto, ACV, Disnea, Paro cardiorrespiratorio…"
+                required
+              />
             </div>
-          )}
+            {diagnosticoCombobox?.tipo === "codificado" &&
+              requiereNivelRojo(diagnosticoCombobox.label) &&
+              registro.nivel_gravedad < 5 && (
+                <div className="mt-3 rounded-lg border border-red-500/60 bg-red-500/15 px-3 py-2 text-sm text-red-200">
+                  Se ha sugerido Nivel 1 (Rojo / Resucitación) por este diagnóstico.
+                </div>
+              )}
+            <p className={`mt-3 text-xs ${disclaimerClass}`}>{DISCLAIMER_LEGAL}</p>
+          </div>
           {registro.justificacion && (
             <div className={boxClass}>
               <p className={`text-xs font-medium uppercase tracking-wide ${labelClass}`}>Justificación</p>
@@ -265,7 +326,6 @@ export function TriageResult({ registro, onNuevoTriage, darkMode = true }: Triag
               <p className={`mt-2 ${valueClass}`}>{registro.explicacion_tecnica}</p>
             </div>
           )}
-          {!registro.diagnostico_presuntivo && <p className={`text-xs ${disclaimerClass}`}>{DISCLAIMER_LEGAL}</p>}
           {Array.isArray(registro.pasos_a_seguir) && registro.pasos_a_seguir.length > 0 && (
             <div className={boxSky}>
               <p className={`text-xs font-medium uppercase tracking-wide ${labelClass}`}>Pasos a seguir</p>

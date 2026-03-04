@@ -3,12 +3,16 @@
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  signInWithPopup,
+  signInWithCredential,
+  GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged as firebaseOnAuthStateChanged,
   type User,
   type Unsubscribe,
 } from "firebase/auth";
 import { ref, get, set } from "firebase/database";
+import { Capacitor } from "@capacitor/core";
 import { getAuthInstance } from "@/lib/firebase";
 import { getDb } from "@/lib/firebase";
 
@@ -40,11 +44,59 @@ export function signUp(email: string, password: string) {
   return createUserWithEmailAndPassword(auth, email.trim(), password);
 }
 
-/** Cerrar sesión */
-export function signOut() {
+/**
+ * ID de cliente web (mismo que en capacitor.config.ts y strings.xml).
+ * Reemplazá TU_ID_WEB_AQUÍ por tu ID que termina en .apps.googleusercontent.com
+ */
+export const GOOGLE_WEB_CLIENT_ID = "882958082764-d5ddvhafpj21gbn583a6ds7bsa1cj3ds.apps.googleusercontent.com";
+
+/** Iniciar sesión con Google. En nativo usa el plugin (inicializado desde la pantalla de login); en web popup. */
+export async function signInWithGoogle() {
   const auth = getAuthInstance();
-  if (!auth) return Promise.resolve();
-  return firebaseSignOut(auth);
+  if (!auth) return Promise.reject(new Error("Firebase Auth no disponible"));
+
+  if (Capacitor.isNativePlatform()) {
+    const clientId = GOOGLE_WEB_CLIENT_ID.trim();
+    if (!clientId || clientId === "TU_ID_WEB_AQUÍ") {
+      return Promise.reject(new Error("Reemplazá TU_ID_WEB_AQUÍ por tu ID de cliente web en lib/firebase-auth.ts y capacitor.config.ts"));
+    }
+    try {
+      const { GoogleAuth } = await import("@codetrix-studio/capacitor-google-auth");
+      if (typeof GoogleAuth.initialize === "function") {
+        await GoogleAuth.initialize({
+          scopes: ["profile", "email"],
+          clientId,
+          serverClientId: clientId,
+          androidClientId: clientId,
+        } as Parameters<typeof GoogleAuth.initialize>[0]);
+      }
+      const googleUser = await GoogleAuth.signIn();
+      const idToken = googleUser.authentication?.idToken;
+      if (!idToken) return Promise.reject(new Error("No se obtuvo el token de Google"));
+      const credential = GoogleAuthProvider.credential(idToken);
+      return signInWithCredential(auth, credential);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return Promise.reject(new Error(msg));
+    }
+  }
+
+  const provider = new GoogleAuthProvider();
+  return signInWithPopup(auth, provider);
+}
+
+/** Cerrar sesión: en nativo también cierra la sesión de Google para poder elegir otra cuenta la próxima vez. */
+export async function signOut(): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const { GoogleAuth } = await import("@codetrix-studio/capacitor-google-auth");
+      if (typeof GoogleAuth.signOut === "function") await GoogleAuth.signOut();
+    } catch {
+      // ignorar si el plugin no está disponible
+    }
+  }
+  const auth = getAuthInstance();
+  if (auth) await firebaseSignOut(auth);
 }
 
 /** Escuchar cambios de autenticación (persistencia de sesión) */

@@ -1,4 +1,4 @@
-import { ref, push, get, update, onValue, type Unsubscribe } from "firebase/database";
+import { ref, push, update, onValue, type Unsubscribe } from "firebase/database";
 import { getDb } from "@/lib/firebase";
 
 const PATH_SOLICITUDES = "solicitudes_medicacion";

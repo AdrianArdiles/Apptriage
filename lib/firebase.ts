@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getDatabase } from "firebase/database";
 import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCzRTO43mNQB-0YdAmb1Qv2lA1zFZ9yle4",
@@ -16,6 +17,7 @@ const firebaseConfig = {
 let app: ReturnType<typeof initializeApp> | null = null;
 let db: ReturnType<typeof getDatabase> | null = null;
 let auth: ReturnType<typeof getAuth> | null = null;
+let firestore: ReturnType<typeof getFirestore> | null = null;
 
 function getFirebaseApp() {
   if (typeof window === "undefined") return null;
@@ -31,6 +33,16 @@ export function getDb() {
     if (a) db = getDatabase(a);
   }
   return db;
+}
+
+/** Firestore. Solo disponible en el cliente. Usado para authorized_users. */
+export function getFirestoreInstance() {
+  if (typeof window === "undefined") return null;
+  if (!firestore) {
+    const a = getFirebaseApp();
+    if (a) firestore = getFirestore(a);
+  }
+  return firestore;
 }
 
 /** Firebase Authentication. Solo disponible en el cliente. */

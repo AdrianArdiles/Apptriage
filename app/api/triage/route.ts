@@ -7,8 +7,6 @@ import { categorizarConLLM, nivelNombreAGravedad } from "@/lib/triage-llm";
 import { gravedadToColorAlerta } from "@/lib/color-alerta";
 import { prisma } from "@/lib/prisma";
 
-export const dynamic = "force-dynamic";
-
 /** CORS abierto para que la APK (Capacitor) y la web puedan llamar sin bloqueos. */
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",

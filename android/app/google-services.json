@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "882958082764",
+    "firebase_url": "https://ambulanciapro-default-rtdb.firebaseio.com",
+    "project_id": "ambulanciapro",
+    "storage_bucket": "ambulanciapro.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:882958082764:android:5ea70953c58d6f3e871869",
+        "android_client_info": {
+          "package_name": "com.adrian.triaje"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "882958082764-0h1ik3rdmoi1n97draaq5vg7pe0qkpku.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.adrian.triaje",
+            "certificate_hash": "a1267cf2c217e68b237df4cb3aeebd14d1c7b485"
+          }
+        },
+        {
+          "client_id": "882958082764-d5ddvhafpj21gbn583a6ds7bsa1cj3ds.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD23DkfTsGOeDCrovueofEHhznIW_68SwU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "882958082764-d5ddvhafpj21gbn583a6ds7bsa1cj3ds.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

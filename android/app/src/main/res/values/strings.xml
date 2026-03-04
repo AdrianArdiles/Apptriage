@@ -1,5 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
+    <string name="google_client_id">882958082764-d5ddvhafpj21gbn583a6ds7bsa1cj3ds.apps.googleusercontent.com</string>
     <string name="app_name">Ambulancia Pro</string>
     <string name="title_activity_main">Ambulancia Pro</string>
     <string name="package_name">com.adrian.triaje</string>

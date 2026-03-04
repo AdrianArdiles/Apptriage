@@ -11,8 +11,17 @@ export interface PendingFirebaseSync {
   pendienteSincronizar: true;
 }
 
+/** Opcional: impresión clínica desde el combobox (triaje) para PDF "Impresión Clínica: X (CIE-11: Y)". */
+export interface ImpresionClinicaOverride {
+  nombre: string;
+  cie11: string;
+}
+
 /** Construye ReportSummaryData a partir del registro de triaje (para generar PDF). */
-export function registroToReportSummaryData(registro: RegistroTriage): ReportSummaryData {
+export function registroToReportSummaryData(
+  registro: RegistroTriage,
+  impresionClinica?: ImpresionClinicaOverride | null
+): ReportSummaryData {
   const signos = registro.signos_vitales ?? {};
   if (registro.pulse != null) signos.frecuenciaCardiaca = registro.pulse;
   if (registro.bp_systolic != null && registro.bp_diastolic != null) {
@@ -26,6 +35,15 @@ export function registroToReportSummaryData(registro: RegistroTriage): ReportSum
         puntaje_glasgow: registro.glasgow.puntaje_glasgow ?? registro.glasgow_score ?? 0,
       }
     : undefined;
+  const diagnostico =
+    registro.diagnostico_presuntivo?.trim()
+      ? {
+          termino_comun: registro.diagnostico_presuntivo.trim(),
+          codigo_cie: "",
+          descripcion_tecnica: registro.diagnostico_presuntivo.trim(),
+        }
+      : undefined;
+
   return {
     hora_inicio_atencion: registro.hora_inicio_atencion,
     paciente_id: registro.paciente_id,
@@ -43,6 +61,9 @@ export function registroToReportSummaryData(registro: RegistroTriage): ReportSum
     bp_systolic: registro.bp_systolic,
     bp_diastolic: registro.bp_diastolic,
     timestamp_eventos: undefined,
+    diagnostico,
+    impresion_clinica: impresionClinica ?? undefined,
+    nivel_gravedad: registro.nivel_gravedad,
   };
 }
 
@@ -55,6 +76,15 @@ export function buildIntervencionPayloadFromRegistro(
   const hasRCP =
     (registro.sintomas_texto ?? "").toUpperCase().includes("RCP") ||
     (registro.diagnostico_presuntivo ?? "").toUpperCase().includes("RCP");
+  const diagnostico_presuntivo =
+    registro.diagnostico_presuntivo?.trim()
+      ? {
+          termino_comun: registro.diagnostico_presuntivo.trim(),
+          codigo_cie: "",
+          descripcion_tecnica: registro.diagnostico_presuntivo.trim(),
+        }
+      : undefined;
+
   return {
     operadorId,
     unidadId,
@@ -69,6 +99,7 @@ export function buildIntervencionPayloadFromRegistro(
     glasgow_score: registro.glasgow_score,
     hasRCP,
     atendido_por: getAtendidoPor() || undefined,
+    diagnostico_presuntivo,
   };
 }
 

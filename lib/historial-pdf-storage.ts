@@ -45,10 +45,10 @@ export function getHistorialPdfList(): HistorialPdfEntry[] {
 /** Añade un informe al historial local (se llama tras generar/compartir PDF). Devuelve la entrada creada para poder guardarla en Firebase. */
 export function addToHistorialPdf(
   data: ReportSummaryData,
-  options?: { operadorId?: string; unidadId?: string; fileUri?: string }
+  options?: { operadorId?: string; unidadId?: string; fileUri?: string; id?: string }
 ): HistorialPdfEntry {
   const list = getRaw();
-  const id = `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const id = options?.id ?? `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   const nombrePaciente = (data.nombre_paciente ?? "").trim() || "Sin nombre";
   const pacienteId = (data.paciente_id ?? "").trim() || "sin-id";
   const entry: HistorialPdfEntry = {
