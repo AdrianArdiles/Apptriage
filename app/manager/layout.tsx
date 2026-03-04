@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { hasManagerSession, clearManagerSession } from "@/lib/manager-session";
-import { signOut } from "@/lib/firebase-auth";
 import { AuthenticatedNav } from "@/components/authenticated-nav";
 
 const BG_DARK = "#0f172a";
@@ -45,17 +44,6 @@ export default function ManagerLayout({
   const handleCerrarGestion = () => {
     clearManagerSession();
     router.push("/atencion");
-  };
-
-  const handleCerrarSesion = async () => {
-    try {
-      clearManagerSession();
-      await signOut();
-      router.replace("/login");
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (typeof alert === "function") alert(`Error al cerrar sesión: ${msg}`);
-    }
   };
 
   if (!mounted || !hasSession) {
