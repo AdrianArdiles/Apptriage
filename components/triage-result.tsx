@@ -25,6 +25,7 @@ import { generateAndSharePDF } from "@/lib/share-pdf";
 import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
 import { pushAtencionToFirebase } from "@/lib/firebase-atenciones";
 import { pushAtencionToFirestore } from "@/lib/firestore-atenciones";
+import { sanitizeFirestoreData } from "@/lib/clean-object";
 import type { NivelGravedad, NivelTriageNombre, RegistroTriage } from "@/lib/types";
 import {
   DiagnosticoComboboxTriage,
@@ -137,10 +138,11 @@ export function TriageResult({
         data: entry.data,
         diagnostico_codigo: impresionClinica?.cie11,
       };
-      await pushAtencionToFirebase(atencionEntry, impresionClinica ?? undefined);
+      const cleanData = sanitizeFirestoreData(atencionEntry);
+      await pushAtencionToFirebase(cleanData as typeof atencionEntry, impresionClinica ?? undefined);
       const paramedicoNombre = getAtendidoPor() || operadorId || "Paramédico";
       try {
-        await pushAtencionToFirestore(atencionEntry, { paramedicoNombre });
+        await pushAtencionToFirestore(cleanData as typeof atencionEntry, { paramedicoNombre });
       } catch (fsErr) {
         console.warn("[Firestore] Error guardando en atenciones:", fsErr);
       }

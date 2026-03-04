@@ -23,8 +23,10 @@ import { DiagnosticoAutocomplete } from "@/components/diagnostico-autocomplete";
 import { generateAndSharePDFSafe, generateAndDownloadPDF, canUseShare } from "@/lib/share-pdf";
 import type { ReportSummaryData } from "@/lib/report-summary";
 import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
+import { getAuthInstance } from "@/lib/firebase";
 import { pushAtencionToFirebase } from "@/lib/firebase-atenciones";
 import { pushAtencionToFirestore } from "@/lib/firestore-atenciones";
+import { sanitizeFirestoreData } from "@/lib/clean-object";
 import { getOperadorId, getUnidadId, getAtendidoPor } from "@/lib/operador-storage";
 import { syncIntervencionToFirebase, removeIntervencionFromFirebase } from "@/lib/firebase-intervenciones";
 import { hapticImpactMedium } from "@/lib/haptics";
@@ -97,6 +99,8 @@ export interface ChecklistXABCDEProps {
   isSubmitting?: boolean;
   /** Llamado después de generar y guardar el PDF; el padre puede limpiar Firebase y formulario. */
   onNuevaAtencion?: () => void;
+  /** Llamado tras finalizar atención con éxito (guardado + PDF). Si se pasa, se usa en lugar de onNuevaAtencion para redirigir (ej. al Panel de Gestión). */
+  onFinalizarSuccess?: () => void;
   /** Email del usuario logueado (Firebase Auth) para guardar en Firestore. */
   userEmail?: string;
 }
@@ -108,7 +112,7 @@ const RED_EMERGENCY = "#dc2626";
 const CARD_DARK = "rounded-lg border text-slate-100 shadow-sm";
 const CARD_DARK_STYLE = { backgroundColor: CARD_BG, borderColor: "rgba(37, 99, 235, 0.35)" };
 const INPUT_DARK =
-  "min-h-[40px] rounded-lg border-2 border-slate-600 bg-slate-800/80 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-[#0f172a]";
+  "min-h-[36px] rounded-md border-2 border-slate-600 bg-slate-800/80 px-2 py-1.5 text-sm text-slate-100 placeholder:text-slate-500 transition-all focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-[#0f172a]";
 const LABEL_DARK = "text-xs font-medium text-slate-300";
 const BTN_GRADIENT =
   "min-h-[44px] touch-manipulation rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition active:scale-[0.98]";
@@ -117,7 +121,7 @@ const BTN_GRADIENT_STYLE = {
   boxShadow: "0 0 16px rgba(37, 99, 235, 0.35), 0 2px 8px rgba(0,0,0,0.25)",
 };
 
-export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: ChecklistXABCDEProps): React.ReactElement {
+export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess, userEmail }: ChecklistXABCDEProps): React.ReactElement {
   const [horaInicio, setHoraInicio] = React.useState<string>("");
   const [inicioRegistrado, setInicioRegistrado] = React.useState(false);
   const [pacienteId, setPacienteId] = React.useState("");
@@ -468,10 +472,18 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
     return `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   }, []);
 
-  /** Flujo FINALIZAR ATENCIÓN: A) Firestore + Realtime DB, B) Generar PDF descarga/visualización, C) Feedback + limpiar formulario. */
+  /** Flujo FINALIZAR ATENCIÓN: A) cleanData = sanitizeFirestoreData(entry) B) addDoc atenciones C) Solo si B ok → PDF D) Si B falla → alert con mensaje exacto. */
   const handleFinalizarAtencion = async () => {
     setSyncError(false);
     setFinalizando(true);
+    setToastMessage("Guardando...");
+    const auth = getAuthInstance();
+    if (!auth?.currentUser) {
+      setFinalizando(false);
+      setToastMessage("Debe iniciar sesión de nuevo para guardar.");
+      if (typeof alert === "function") alert("Sesión expirada. Debe re-autenticarse para guardar.");
+      return;
+    }
     const operadorId = getOperadorId() || "";
     const unidadId = getUnidadId() || "";
     const data = buildReportSummaryData();
@@ -488,49 +500,68 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
       data,
       diagnostico_codigo: diagnosticoPresuntivo?.codigo_cie,
     };
+    const paramedicoNombre = getAtendidoPor() || operadorId || "Paramédico";
+
+    // Paso A: sanitizar para que Firestore no reciba undefined (p. ej. data.sintomas_texto)
+    const cleanData = sanitizeFirestoreData(entry);
+    try {
+      await pushAtencionToFirestore(cleanData as typeof entry, {
+        paramedicoNombre,
+        paramedicoEmail: (userEmail ?? "").trim() || undefined,
+      });
+    } catch (e) {
+      setFinalizando(false);
+      setSyncError(true);
+      const code = e && typeof e === "object" && "code" in e ? String((e as { code: string }).code) : "";
+      const msg = e && typeof e === "object" && "message" in e ? String((e as { message: string }).message) : (e instanceof Error ? e.message : String(e));
+      const userMsg =
+        code === "permission-denied"
+          ? "Permisos denegados. Revisá las reglas de Firestore."
+          : code === "invalid-argument" || code === "invalid-argument-error"
+            ? "Datos inválidos. Revisá que no haya campos vacíos o mal formados."
+            : msg;
+      setToastMessage("Error de Firebase: " + userMsg);
+      if (typeof alert === "function") alert("Error de Firebase: " + userMsg);
+      return;
+    }
+
     try {
       await pushAtencionToFirebase(
-        entry,
+        cleanData as typeof entry,
         diagnosticoPresuntivo
           ? { nombre: diagnosticoPresuntivo.termino_comun, cie11: diagnosticoPresuntivo.codigo_cie }
           : undefined
       );
-      const paramedicoNombre = getAtendidoPor() || operadorId || "Paramédico";
-      await pushAtencionToFirestore(entry, {
-        paramedicoNombre,
-        paramedicoEmail: (userEmail ?? "").trim() || undefined,
-      });
+    } catch {
+      // Realtime DB opcional; atenciones ya está en Firestore
+    }
+    removeIntervencionFromFirebase(unidadId || operadorId);
+    setLastData(data);
 
-      removeIntervencionFromFirebase(unidadId || operadorId);
-      setLastData(data);
-
+    try {
       if (canUseShare()) {
         const result = await generateAndSharePDFSafe(data);
-        if (result.error) {
-          setToastMessage(result.error);
-        } else {
+        if (result.error) setToastMessage(result.error);
+        else {
           addToHistorialPdf(data, {
             operadorId: operadorId || undefined,
             unidadId: unidadId || undefined,
             fileUri: result.fileUri,
             id: result.reportId,
           });
-          setToastMessage("Atención guardada. PDF generado y listo para compartir.");
+          setToastMessage("Atención guardada. PDF generado.");
         }
       } else {
         const result = await generateAndDownloadPDF(data);
         addToHistorialPdf(data, { operadorId: operadorId || undefined, unidadId: unidadId || undefined, id: result.reportId });
         setToastMessage("Atención guardada. PDF descargado.");
       }
-
-      if (typeof alert === "function") alert("Atención finalizada correctamente. El formulario se reiniciará.");
-      handleNuevaAtencionClick();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("Error al finalizar atención:", e);
-      setSyncError(true);
-      setToastMessage("Error: " + msg);
-      if (typeof alert === "function") alert("Error al finalizar atención: " + msg);
+      if (typeof alert === "function") alert("Atención finalizada correctamente.");
+      // Paso D: redirigir al Panel de Gestión si el padre lo definió; si no, nueva atención
+      if (onFinalizarSuccess) onFinalizarSuccess();
+      else handleNuevaAtencionClick();
+    } catch (pdfErr) {
+      setToastMessage("Guardado OK. Error al generar PDF: " + (pdfErr instanceof Error ? pdfErr.message : String(pdfErr)));
     } finally {
       setFinalizando(false);
     }
@@ -577,9 +608,9 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
       case 0:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="p-3 pb-2">
-              <CardTitle className="text-base text-slate-100">Hora de inicio</CardTitle>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
+            <CardHeader className="p-2 pb-1">
+              <CardTitle className="text-sm text-slate-100">Hora de inicio</CardTitle>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
                 <Input readOnly value={horaInicio || "—"} className={`max-w-[180px] font-mono ${INPUT_DARK}`} aria-label="Hora de inicio" />
                 {!inicioRegistrado ? (
                   <Button type="button" onClick={registrarInicio} className={BTN_GRADIENT} style={BTN_GRADIENT_STYLE}>
@@ -602,15 +633,15 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
         const item = XABCDE_ITEMS[idx];
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="p-3 pb-1">
-              <CardTitle className="text-base text-slate-100">{item.letra} — {item.titulo}</CardTitle>
-              <p className="text-xs text-slate-400">{item.descripcion}. Toque: Pendiente → OK → No aplica</p>
+            <CardHeader className="p-2 pb-0">
+              <CardTitle className="text-sm text-slate-100">{item.letra} — {item.titulo}</CardTitle>
+              <p className="text-[10px] text-slate-400">{item.descripcion}. Toque: Pendiente → OK → No aplica</p>
             </CardHeader>
-            <CardContent className="p-3 pt-0">
+            <CardContent className="p-2 pt-1">
               <button
                 type="button"
                 onClick={() => toggleXABCDE(item.letra)}
-                className={`flex min-h-[48px] w-full touch-manipulation items-center justify-between rounded-lg border-2 px-3 py-2 text-left text-sm transition active:scale-[0.98] ${colorEstado(xabcde[item.letra] ?? "pendiente")}`}
+                className={`flex min-h-[42px] w-full touch-manipulation items-center justify-between rounded-md border-2 px-2 py-1.5 text-left text-sm transition active:scale-[0.98] ${colorEstado(xabcde[item.letra] ?? "pendiente")}`}
               >
                 <span className="text-xl font-bold">{item.letra}</span>
                 <div className="text-right">
@@ -625,28 +656,28 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
       case 7:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="p-3 pb-1">
-              <CardTitle className="text-base text-slate-100">Signos vitales</CardTitle>
+            <CardHeader className="p-2 pb-0">
+              <CardTitle className="text-sm text-slate-100">Signos vitales</CardTitle>
             </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-2 p-3 pt-0">
-              <div><Label className={LABEL_DARK}>Pérdida sangre</Label><Input value={bloodLoss} onChange={(e) => setBloodLoss(e.target.value)} placeholder="Ninguna" className={`mt-0.5 ${INPUT_DARK}`} /></div>
-              <div><Label className={LABEL_DARK}>Vía aérea</Label><Input value={airwayStatus} onChange={(e) => setAirwayStatus(e.target.value)} placeholder="Permeable" className={`mt-0.5 ${INPUT_DARK}`} /></div>
-              <div><Label className={LABEL_DARK}>FR (rpm)</Label><Input type="number" min={0} max={60} value={respirationRate} onChange={(e) => setRespirationRate(e.target.value)} placeholder="16" className={`mt-0.5 ${INPUT_DARK}`} /></div>
-              <div><Label className={LABEL_DARK}>Pulso (lpm)</Label><Input type="number" min={0} max={300} value={pulse} onChange={(e) => setPulse(e.target.value)} placeholder="72" className={`mt-0.5 ${INPUT_DARK}`} /></div>
-              <div><Label className={LABEL_DARK}>TA sist.</Label><Input type="number" value={bpSystolic} onChange={(e) => setBpSystolic(e.target.value)} placeholder="120" className={`mt-0.5 ${INPUT_DARK}`} /></div>
-              <div><Label className={LABEL_DARK}>TA diast.</Label><Input type="number" value={bpDiastolic} onChange={(e) => setBpDiastolic(e.target.value)} placeholder="80" className={`mt-0.5 ${INPUT_DARK}`} /></div>
-              <div className="col-span-2"><Label className={LABEL_DARK}>SpO₂ (%)</Label><Input type="number" min={0} max={100} value={saturacionOxigeno} onChange={(e) => setSaturacionOxigeno(e.target.value)} placeholder="98" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+            <CardContent className="grid grid-cols-2 gap-2 p-2 pt-1">
+              <div><Label className={`${LABEL_DARK} text-sm`}>Pérdida sangre</Label><Input value={bloodLoss} onChange={(e) => setBloodLoss(e.target.value)} placeholder="Ninguna" className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
+              <div><Label className={`${LABEL_DARK} text-sm`}>Vía aérea</Label><Input value={airwayStatus} onChange={(e) => setAirwayStatus(e.target.value)} placeholder="Permeable" className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
+              <div><Label className={`${LABEL_DARK} text-sm`}>FR (rpm)</Label><Input type="number" min={0} max={60} value={respirationRate} onChange={(e) => setRespirationRate(e.target.value)} placeholder="16" className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
+              <div><Label className={`${LABEL_DARK} text-sm`}>Pulso (lpm)</Label><Input type="number" min={0} max={300} value={pulse} onChange={(e) => setPulse(e.target.value)} placeholder="72" className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
+              <div><Label className={`${LABEL_DARK} text-sm`}>TA sist.</Label><Input type="number" value={bpSystolic} onChange={(e) => setBpSystolic(e.target.value)} placeholder="120" className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
+              <div><Label className={`${LABEL_DARK} text-sm`}>TA diast.</Label><Input type="number" value={bpDiastolic} onChange={(e) => setBpDiastolic(e.target.value)} placeholder="80" className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
+              <div className="col-span-2"><Label className={`${LABEL_DARK} text-sm`}>SpO₂ (%)</Label><Input type="number" min={0} max={100} value={saturacionOxigeno} onChange={(e) => setSaturacionOxigeno(e.target.value)} placeholder="98" className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
             </CardContent>
           </Card>
         );
       case 8:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="p-3 pb-1">
-              <CardTitle className="text-base text-slate-100">Glasgow</CardTitle>
-              <p className="text-xs text-slate-400">Ocular, Verbal, Motor</p>
+            <CardHeader className="p-2 pb-0">
+              <CardTitle className="text-sm text-slate-100">Glasgow</CardTitle>
+              <p className="text-[10px] text-slate-400">Ocular, Verbal, Motor</p>
             </CardHeader>
-            <CardContent className="grid grid-cols-3 gap-2 p-3 pt-0">
+            <CardContent className="grid grid-cols-3 gap-2 p-2 pt-1">
               <div><Label className={LABEL_DARK}>E</Label><Select value={glasgowE ? String(glasgowE) : "0"} onValueChange={(v) => setGlasgowE(Number(v))}><SelectTrigger className={`mt-0.5 ${INPUT_DARK} min-h-[40px] [&>span]:text-slate-100 [&>span]:text-sm`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_OCULAR.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100 text-sm">{o.label}</SelectItem>)}</SelectContent></Select></div>
               <div><Label className={LABEL_DARK}>V</Label><Select value={glasgowV ? String(glasgowV) : "0"} onValueChange={(v) => setGlasgowV(Number(v))}><SelectTrigger className={`mt-0.5 ${INPUT_DARK} min-h-[40px] [&>span]:text-slate-100 [&>span]:text-sm`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_VERBAL.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100 text-sm">{o.label}</SelectItem>)}</SelectContent></Select></div>
               <div><Label className={LABEL_DARK}>M</Label><Select value={glasgowM ? String(glasgowM) : "0"} onValueChange={(v) => setGlasgowM(Number(v))}><SelectTrigger className={`mt-0.5 ${INPUT_DARK} min-h-[40px] [&>span]:text-slate-100 [&>span]:text-sm`}><SelectValue placeholder="—" /></SelectTrigger><SelectContent className="border-slate-600 bg-slate-800 text-slate-100">{GLASGOW_MOTOR.map((o) => <SelectItem key={o.value} value={String(o.value)} className="focus:bg-slate-700 focus:text-slate-100 text-sm">{o.label}</SelectItem>)}</SelectContent></Select></div>
@@ -657,12 +688,12 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
       case 9:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="p-3 pb-1">
-              <CardTitle className="text-base text-slate-100">Tiempos</CardTitle>
-              <p className="text-xs text-slate-400">Hora exacta de cada evento</p>
+            <CardHeader className="p-2 pb-0">
+              <CardTitle className="text-sm text-slate-100">Tiempos</CardTitle>
+              <p className="text-[10px] text-slate-400">Hora exacta de cada evento</p>
             </CardHeader>
-            <CardContent className="space-y-2 p-3 pt-0">
-              <div className="grid grid-cols-2 gap-1.5">
+            <CardContent className="space-y-2 p-2 pt-1">
+              <div className="grid grid-cols-2 gap-2">
                 {BOTONES_TIMESTAMP.map((b) => {
                   const count = countByEvento(b.label);
                   const isPulsing = pulseButtonKey === b.label;
@@ -709,15 +740,15 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
       case 10:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="p-3 pb-1">
-              <CardTitle className="text-base text-slate-100">Paciente</CardTitle>
-              <p className="text-xs text-slate-400">Datos y diagnóstico CIE-11</p>
+            <CardHeader className="p-2 pb-0">
+              <CardTitle className="text-sm text-slate-100">Paciente</CardTitle>
+              <p className="text-[10px] text-slate-400">Datos y diagnóstico CIE-11</p>
             </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-2 p-3 pt-0">
-              <div><Label htmlFor="paciente_id" className={LABEL_DARK}>ID / Historia</Label><Input id="paciente_id" value={pacienteId} onChange={(e) => setPacienteId(e.target.value)} placeholder="Obligatorio" className={`mt-0.5 ${INPUT_DARK}`} /></div>
-              <div><Label htmlFor="nombre_paciente" className={LABEL_DARK}>Nombre</Label><Input id="nombre_paciente" value={nombrePaciente} onChange={(e) => setNombrePaciente(e.target.value)} className={`mt-0.5 ${INPUT_DARK}`} /></div>
-              <div><Label htmlFor="dni" className={LABEL_DARK}>DNI</Label><Input id="dni" value={dni} onChange={(e) => setDni(e.target.value)} className={`mt-0.5 ${INPUT_DARK}`} /></div>
-              <div className="col-span-2"><Label htmlFor="sintomas" className={LABEL_DARK}>Motivo / Observaciones</Label><Input id="sintomas" value={sintomasTexto} onChange={(e) => setSintomasTexto(e.target.value)} placeholder="Motivo de atención" className={`mt-0.5 ${INPUT_DARK}`} /></div>
+            <CardContent className="grid grid-cols-2 gap-2 p-2 pt-1">
+              <div><Label htmlFor="paciente_id" className={`${LABEL_DARK} text-sm`}>ID / Historia</Label><Input id="paciente_id" value={pacienteId} onChange={(e) => setPacienteId(e.target.value)} placeholder="Obligatorio" className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
+              <div><Label htmlFor="nombre_paciente" className={`${LABEL_DARK} text-sm`}>Nombre</Label><Input id="nombre_paciente" value={nombrePaciente} onChange={(e) => setNombrePaciente(e.target.value)} className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
+              <div><Label htmlFor="dni" className={`${LABEL_DARK} text-sm`}>DNI</Label><Input id="dni" value={dni} onChange={(e) => setDni(e.target.value)} className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
+              <div className="col-span-2"><Label htmlFor="sintomas" className={`${LABEL_DARK} text-sm`}>Motivo / Observaciones</Label><Input id="sintomas" value={sintomasTexto} onChange={(e) => setSintomasTexto(e.target.value)} placeholder="Motivo de atención" className={`mt-0.5 text-sm ${INPUT_DARK}`} /></div>
               <div className="col-span-2">
                 <Label htmlFor="diagnostico-presuntivo" className={LABEL_DARK}>Diagnóstico presuntivo <span className="text-amber-400">*</span></Label>
                 <DiagnosticoAutocomplete value={diagnosticoPresuntivo} onChange={setDiagnosticoPresuntivo} placeholder="Buscar (Infarto, ACV…)" className="mt-0.5" required />
@@ -729,11 +760,11 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
         if (atencionFinalizada) {
           return (
             <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-              <CardHeader className="p-3 pb-1">
+              <CardHeader className="p-2 pb-0">
                 <CardTitle className="text-base text-slate-100">Atención finalizada</CardTitle>
                 <p className="text-xs text-slate-400">Datos en central. Opcional: compartir o descargar PDF.</p>
               </CardHeader>
-              <CardContent className="flex flex-col gap-2 p-3 pt-0">
+              <CardContent className="flex flex-col gap-2 p-2 pt-0">
                 <Button type="button" onClick={handleCompartirPDF} disabled={compartirPdfLoading} className="min-h-[40px] w-full rounded-lg border-2 border-slate-500 bg-slate-700/80 text-sm text-slate-100 hover:bg-slate-600 disabled:opacity-60">
                   {compartirPdfLoading ? "Generando…" : canUseShare() ? "Compartir PDF" : "Descargar PDF"}
                 </Button>
@@ -752,11 +783,11 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
         if (!tieneTA) faltantes.push("Tensión arterial");
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="p-3 pb-1">
-              <CardTitle className="text-base text-slate-100">Finalizar atención</CardTitle>
+            <CardHeader className="p-2 pb-0">
+              <CardTitle className="text-sm text-slate-100">Finalizar atención</CardTitle>
               <p className="text-xs text-slate-400">Paciente: {pacienteId || "—"} · Inicio: {horaInicio ? new Date(horaInicio).toLocaleTimeString("es-ES") : "—"}</p>
             </CardHeader>
-            <CardContent className="p-3 pt-0 space-y-2">
+            <CardContent className="p-2 pt-1 space-y-2">
               {syncError && (
                 <div className="rounded border border-amber-500/70 bg-amber-500/15 px-2 py-1.5 text-xs text-amber-200">
                   No se pudo enviar. Revise conexión e intente de nuevo.
@@ -803,7 +834,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
       </div>
 
       {/* Barra de progreso compacta */}
-      <div className="mb-2 shrink-0">
+      <div className="mb-1.5 shrink-0">
         <p className="mb-0.5 text-[10px] font-medium text-slate-400">{progressText}</p>
         <div className="h-1 w-full overflow-hidden rounded-full bg-slate-800">
           <div className="h-full rounded-full transition-all duration-300" style={{ width: `${progressPct}%`, background: `linear-gradient(90deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)` }} />
@@ -813,9 +844,9 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, userEmail }: Checkl
       {/* Contenido con padding inferior para no quedar bajo la barra fija */}
       <div className="min-h-0 flex-1 overflow-auto pb-24">{renderStepContent()}</div>
 
-      {/* Barra inferior fija: siempre visible, cero scroll para acceder al botón */}
+      {/* Barra inferior fija: botón Finalizar siempre accesible sin scroll (fixed bottom-0 w-full) */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-30 flex gap-2 border-t px-3 py-2 pb-[env(safe-area-inset-bottom,0.5rem)]"
+        className="fixed bottom-0 left-0 right-0 z-30 flex w-full gap-2 border-t p-2 pb-[env(safe-area-inset-bottom,0.5rem)]"
         style={{ backgroundColor: CARD_BG, borderColor: "rgba(37, 99, 235, 0.25)" }}
       >
         <Button

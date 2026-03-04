@@ -1,24 +1,9 @@
 import { ref, set, get, remove, serverTimestamp } from "firebase/database";
 import { getDb } from "@/lib/firebase";
+import { cleanObject } from "@/lib/clean-object";
 import type { ReportSummaryData } from "@/lib/report-summary";
 
 const PATH_ATENCIONES = "atenciones";
-
-/** Firebase Realtime DB no acepta undefined. Convierte undefined a null y elimina claves undefined en objetos anidados. */
-function sanitizeForFirebase(value: unknown): unknown {
-  if (value === undefined) return null;
-  if (value === null) return null;
-  if (Array.isArray(value)) return value.map((item) => sanitizeForFirebase(item));
-  if (typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (v === undefined) continue;
-      out[k] = sanitizeForFirebase(v);
-    }
-    return out;
-  }
-  return value;
-}
 
 /** Objeto diagnóstico para Firebase (timestamp se rellena con serverTimestamp()). */
 export interface DiagnosticoFirebase {
@@ -71,7 +56,7 @@ export function pushAtencionToFirebase(
     data: dataWithDiagnostico,
     diagnostico_codigo: diagnostico?.cie11 ?? entry.diagnostico_codigo ?? undefined,
   };
-  const sanitized = sanitizeForFirebase(payload) as Record<string, unknown>;
+  const sanitized = cleanObject(payload) as Record<string, unknown>;
   return set(ref(database, `${PATH_ATENCIONES}/${id}`), sanitized).catch((err) => {
     console.warn("[Firebase] Error guardando atención:", err?.message ?? err);
     throw err;

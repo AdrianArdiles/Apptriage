@@ -141,9 +141,16 @@ function LandingPage(): React.ReactElement {
         await signIn(mail, pass);
       }
     } catch (err: unknown) {
+      const code = err && typeof err === "object" && "code" in err ? String((err as { code: string }).code) : "";
       const msg = err && typeof err === "object" && "message" in err ? String((err as { message: string }).message) : String(err);
-      setLoginError(msg);
-      if (typeof alert === "function") alert(msg);
+      if (code === "auth/email-already-in-use") {
+        setRegistroMode(false);
+        setLoginError("Ya tenés una cuenta. Iniciá sesión con tu correo y contraseña.");
+        if (typeof alert === "function") alert("Este correo ya está registrado, por favor inicia sesión.");
+      } else {
+        setLoginError(msg);
+        if (typeof alert === "function") alert(msg);
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -240,8 +247,8 @@ function LandingPage(): React.ReactElement {
           <p className="mb-2 text-center text-sm font-medium uppercase tracking-wide text-slate-400">
             Acceso Profesional
           </p>
-          <p className="mb-6 text-center text-sm text-slate-500">
-            Iniciá sesión con Google o con tu correo autorizado
+          <p className="mb-4 text-center text-sm text-slate-500">
+            Inicio de sesión o registro con Google o con correo y contraseña
           </p>
 
           {accesoDenegado && (
@@ -285,7 +292,7 @@ function LandingPage(): React.ReactElement {
                   onClick={() => { setAuthMode("email"); setLoginError(""); }}
                   className="w-full min-h-[48px] rounded-xl border-2 border-slate-600 bg-slate-800/80 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-slate-700 hover:text-slate-100"
                 >
-                  Iniciar sesión con otro correo
+                  Inicio de sesión / Registro por Email y contraseña
                 </button>
               </>
             ) : (
@@ -327,7 +334,7 @@ function LandingPage(): React.ReactElement {
                   onClick={() => { setRegistroMode(!registroMode); setLoginError(""); }}
                   className="w-full text-center text-xs text-slate-400 hover:text-slate-300 underline"
                 >
-                  {registroMode ? "Ya tengo cuenta, iniciar sesión" : "¿No tenés cuenta? Registrarse con correo"}
+                  {registroMode ? "Ya tengo cuenta — Iniciar sesión" : "¿No tenés cuenta? — Registrarse"}
                 </button>
                 <button
                   type="button"

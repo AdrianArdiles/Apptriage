@@ -45,35 +45,55 @@ export function signUp(email: string, password: string) {
 }
 
 /**
- * ID de cliente web para Google Sign-In.
- * 1) En Firebase Console → Authentication → Sign-in method → Google → "ID de cliente web" (copiá el valor).
- * 2) Definí en .env.local: NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID=tu_id.apps.googleusercontent.com
- * Si no está definido, se usa el valor por defecto (mismo que capacitor.config.ts / strings.xml).
+ * ID de cliente web para Google Sign-In (serverClientId).
+ * Definí en .env.local: NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID=tu_id.apps.googleusercontent.com
  */
 export const GOOGLE_WEB_CLIENT_ID =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID?.trim()) ||
   "882958082764-d5ddvhafpj21gbn583a6ds7bsa1cj3ds.apps.googleusercontent.com";
 
-/** Iniciar sesión con Google. En nativo usa el plugin (inicializado desde la pantalla de login); en web popup. */
+/** True solo después de haber llamado GoogleAuth.initialize en esta sesión (nativo). Evita NullPointerException en signOut. */
+let _googleAuthInitialized = false;
+
+/**
+ * Inicializa el cliente de Google Auth en nativo con serverClientId. Debe ejecutarse al arrancar la app
+ * (o antes del primer signIn con Google) para que signOut no dispare un crash por cliente null.
+ */
+export async function ensureGoogleAuthInitialized(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform()) return false;
+  if (_googleAuthInitialized) return true;
+  const clientId = GOOGLE_WEB_CLIENT_ID.trim();
+  if (!clientId || clientId === "TU_ID_WEB_AQUÍ") return false;
+  try {
+    const { GoogleAuth } = await import("@codetrix-studio/capacitor-google-auth");
+    if (typeof GoogleAuth.initialize === "function") {
+      await GoogleAuth.initialize({
+        scopes: ["profile", "email"],
+        clientId,
+        serverClientId: clientId,
+        androidClientId: clientId,
+      } as Parameters<typeof GoogleAuth.initialize>[0]);
+      _googleAuthInitialized = true;
+      return true;
+    }
+  } catch {
+    // plugin no disponible o fallo de red
+  }
+  return false;
+}
+
+/** Iniciar sesión con Google. En nativo usa el plugin (inicializado antes); en web popup. */
 export async function signInWithGoogle() {
   const auth = getAuthInstance();
   if (!auth) return Promise.reject(new Error("Firebase Auth no disponible"));
 
   if (Capacitor.isNativePlatform()) {
-    const clientId = GOOGLE_WEB_CLIENT_ID.trim();
-    if (!clientId || clientId === "TU_ID_WEB_AQUÍ") {
-      return Promise.reject(new Error("Reemplazá TU_ID_WEB_AQUÍ por tu ID de cliente web en lib/firebase-auth.ts y capacitor.config.ts"));
+    const ok = await ensureGoogleAuthInitialized();
+    if (!ok) {
+      return Promise.reject(new Error("No se pudo inicializar Google Auth. Revisá NEXT_PUBLIC_GOOGLE_WEB_CLIENT_ID en .env.local"));
     }
     try {
       const { GoogleAuth } = await import("@codetrix-studio/capacitor-google-auth");
-      if (typeof GoogleAuth.initialize === "function") {
-        await GoogleAuth.initialize({
-          scopes: ["profile", "email"],
-          clientId,
-          serverClientId: clientId,
-          androidClientId: clientId,
-        } as Parameters<typeof GoogleAuth.initialize>[0]);
-      }
       const googleUser = await GoogleAuth.signIn();
       const idToken = googleUser.authentication?.idToken;
       if (!idToken) return Promise.reject(new Error("No se obtuvo el token de Google"));
@@ -89,14 +109,29 @@ export async function signInWithGoogle() {
   return signInWithPopup(auth, provider);
 }
 
-/** Cerrar sesión: en nativo también cierra la sesión de Google para poder elegir otra cuenta la próxima vez. */
+/**
+ * Cerrar sesión. Guarda de seguridad: solo se intenta GoogleAuth.signOut() en WEB y cuando
+ * el cliente de Google fue inicializado correctamente (no null). En nativo (Capacitor/Android)
+ * NUNCA se llama a GoogleAuth.signOut() para evitar crash fatal (NullPointerException en
+ * GoogleAuth.java cuando GoogleSignInClient es null, p. ej. usuario logueado por Email).
+ */
 export async function signOut(): Promise<void> {
   if (Capacitor.isNativePlatform()) {
+    _googleAuthInitialized = false;
+    // Solo Firebase Auth; no tocar el plugin en nativo
+  } else {
     try {
-      const { GoogleAuth } = await import("@codetrix-studio/capacitor-google-auth");
-      if (typeof GoogleAuth.signOut === "function") await GoogleAuth.signOut();
+      if (_googleAuthInitialized) {
+        try {
+          const { GoogleAuth } = await import("@codetrix-studio/capacitor-google-auth");
+          if (GoogleAuth && typeof GoogleAuth.signOut === "function") await GoogleAuth.signOut();
+        } catch {
+          /* ignorar */
+        }
+        _googleAuthInitialized = false;
+      }
     } catch {
-      // ignorar si el plugin no está disponible
+      /* nunca fallar el signOut por el plugin */
     }
   }
   const auth = getAuthInstance();

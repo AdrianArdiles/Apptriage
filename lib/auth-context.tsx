@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import type { User } from "firebase/auth";
-import { onAuthStateChanged, type UserProfile } from "@/lib/firebase-auth";
+import { onAuthStateChanged, ensureGoogleAuthInitialized, type UserProfile } from "@/lib/firebase-auth";
 import { getAuthorizedUserByEmail, type AuthorizedUser } from "@/lib/authorized-users";
+import { ensureUserDocument } from "@/lib/firestore-users";
 import { syncFromProfile, clearOperadorId } from "@/lib/operador-storage";
 import { crearPrimerAdminEnFirestore } from "@/lib/seed-authorized-admin";
 
@@ -57,6 +58,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
   const [loading, setLoading] = React.useState(true);
   const [authError, setAuthError] = React.useState<string | null>(null);
 
+  React.useEffect(() => {
+    ensureGoogleAuthInitialized().catch(() => {});
+  }, []);
+
   const refreshProfile = React.useCallback(async () => {
     if (!user?.email) return;
     setAuthError(null);
@@ -91,7 +96,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       }
       try {
         const email = (u.email ?? "").trim().toLowerCase();
-        // Después del login: buscar al usuario en la colección authorized_users (Firestore)
+        // Registro automático: si el usuario no existe en la colección users, crearlo con role: 'USER'.
+        // Así ningún usuario opera "en el aire" sin ficha en la base de datos (Google o Email).
+        try {
+          await ensureUserDocument(u.uid, u.email ?? "");
+        } catch (e) {
+          console.warn("[Firestore users] No se pudo crear documento de usuario:", e);
+        }
+        // Buscar en authorized_users para permisos de la app
         const a = email ? await getAuthorizedUserByEmail(email) : null;
         if (a) {
           setAuthorizedUser(a);

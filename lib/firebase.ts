@@ -35,7 +35,7 @@ export function getDb() {
   return db;
 }
 
-/** Firestore. Solo disponible en el cliente. Usado para authorized_users. */
+/** Firestore (db). Solo disponible en el cliente. Usado para authorized_users, users y atenciones. */
 export function getFirestoreInstance() {
   if (typeof window === "undefined") return null;
   if (!firestore) {
@@ -43,6 +43,11 @@ export function getFirestoreInstance() {
     if (a) firestore = getFirestore(a);
   }
   return firestore;
+}
+
+/** Alias para compatibilidad: instancia de Firestore (misma que getFirestoreInstance). */
+export function getDbFirestore() {
+  return getFirestoreInstance();
 }
 
 /** Firebase Authentication. Solo disponible en el cliente. */

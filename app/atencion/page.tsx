@@ -310,9 +310,9 @@ function AtencionContent(): React.ReactElement | null {
         </div>
       )}
 
-      <main className="mx-auto w-full max-w-3xl px-3 py-3 sm:px-4 sm:py-4">
+      <main className="mx-auto w-full max-w-3xl p-2 sm:p-3">
         {!resultado && (
-          <div className="mb-2 flex justify-end">
+          <div className="mb-1.5 flex justify-end">
             <button
               type="button"
               onClick={() => setModalCancelarOpen(true)}
@@ -371,6 +371,7 @@ function AtencionContent(): React.ReactElement | null {
               onSubmit={handleSubmit}
               isSubmitting={isSubmitting}
               onNuevaAtencion={handleResetAll}
+              onFinalizarSuccess={() => router.push("/manager")}
               userEmail={user?.email ?? undefined}
             />
           </div>
