@@ -1,10 +1,26 @@
 import { Capacitor } from "@capacitor/core";
 import { CapacitorHttp } from "@capacitor/core";
 
-/** Base URL de la API (Vercel). Para migrar a Firebase: NEXT_PUBLIC_API_URL en build. */
-const API_BASE_URL =
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_URL) ||
-  "https://apptriage.vercel.app";
+/**
+ * Base URL de la API. Resolución:
+ * - NEXT_PUBLIC_API_URL definida (build) → se usa (ej. Vercel, APK).
+ * - Navegador en localhost (desarrollo, no Capacitor) → mismo origen (ej. http://localhost:3000).
+ * - Resto (APK sin env, producción web) → https://apptriage.vercel.app.
+ */
+function getApiBaseUrl(): string {
+  const fromEnv = typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  if (
+    typeof window !== "undefined" &&
+    !Capacitor.isNativePlatform() &&
+    window.location?.hostname === "localhost"
+  ) {
+    return `${window.location.protocol}//${window.location.host}`;
+  }
+  return "https://apptriage.vercel.app";
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 export { API_BASE_URL };
 
@@ -13,7 +29,7 @@ export const TRIAGE_API_URL = `${API_BASE_URL}/api/triage`;
 
 export function apiUrl(path: string): string {
   const normalized = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE_URL}${normalized}`;
+  return `${getApiBaseUrl()}${normalized}`;
 }
 
 /**

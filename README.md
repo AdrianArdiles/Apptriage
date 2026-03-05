@@ -35,11 +35,8 @@ Abre [http://localhost:3000](http://localhost:3000).
   ```bash
   npm run deploy
   ```
-- **Android (APK):** build estático + Capacitor; la APK usa la API en Vercel.
-  ```bash
-  npm run build:android
-  npx cap open android
-  ```
+- **Android (APK):** build estático + Capacitor; la APK usa la API en Vercel. Opcional: en Vercel (Project → Settings → Environment Variables) definir `NEXT_PUBLIC_API_URL=https://apptriage.vercel.app` para que el build de la web y la APK usen la misma base. `.env.production` ya incluye ese valor por defecto.
+- **CORS:** las rutas `/api/*` en Vercel aceptan peticiones desde la APK (Capacitor) y desde la web; configurado en `next.config.mjs`.
 - **Autenticación:** Firebase Auth (Google y correo/contraseña). El dominio de Vercel debe estar en Firebase → Authentication → Dominios autorizados.
 
 ## Estructura
