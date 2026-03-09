@@ -46,4 +46,6 @@ model Atencion {
   diagnostico_codigo String?
   // Todos los campos de triaje, signos vitales y paciente (objeto anidado)
   data               String   // JSON: ReportSummaryData (xabcde, signos_vitales, glasgow, timestamp_eventos, etc.)
+  // Evidencia fotográfica (URLs de imágenes) para futuras implementaciones de registro fotográfico
+  evidencia_fotos    String[] @default([])
 }

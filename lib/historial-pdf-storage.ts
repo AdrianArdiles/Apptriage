@@ -1,4 +1,5 @@
 import type { ReportSummaryData } from "@/lib/report-summary";
+import { generateReportId } from "@/lib/report-id";
 
 const HISTORIAL_PDF_KEY = "ambulancia-pro-historial-pdf";
 const MAX_ENTRIES = 30;
@@ -48,7 +49,7 @@ export function addToHistorialPdf(
   options?: { operadorId?: string; unidadId?: string; fileUri?: string; id?: string }
 ): HistorialPdfEntry {
   const list = getRaw();
-  const id = options?.id ?? `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const id = options?.id ?? generateReportId();
   const nombrePaciente = (data.nombre_paciente ?? "").trim() || "Sin nombre";
   const pacienteId = (data.paciente_id ?? "").trim() || "sin-id";
   const entry: HistorialPdfEntry = {

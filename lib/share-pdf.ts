@@ -1,10 +1,10 @@
 import { Capacitor } from "@capacitor/core";
 import { Filesystem, Directory } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
-import QRCode from "qrcode";
 import type { ReportSummaryData } from "@/lib/report-summary";
 import { getPDFBase64, getPDFBlob } from "@/lib/pdf-export";
 import { getLogoDataUrl } from "@/lib/logo-image";
+import { generateReportId } from "@/lib/report-id";
 
 const PDF_FILENAME_PREFIX = "Informe_AmbulanciaPro";
 const CACHE_SUBDIR = "informes";
@@ -16,15 +16,12 @@ export const PDF_ERROR_MENSAJE_DATOS_GUARDADOS =
 /** Última ruta de PDF escrita en Cache; para borrar antes de generar uno nuevo y no llenar memoria. */
 let lastPdfPathInCache: string | null = null;
 
-function generateReportId(): string {
-  return `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
 async function getPdfOptions(): Promise<{ logoDataUrl?: string; reportId: string; qrDataUrl?: string }> {
   const logoDataUrl = await getLogoDataUrl();
   const reportId = generateReportId();
   let qrDataUrl: string | undefined;
   try {
+    const QRCode = (await import("qrcode")).default;
     qrDataUrl = await QRCode.toDataURL(reportId, { margin: 1, width: 140 });
   } catch {
     // sin QR si falla
@@ -63,6 +60,7 @@ export async function generatePDFAndGetUri(
     const reportId = existingReportId ?? generateReportId();
     let qrDataUrl: string | undefined;
     try {
+      const QRCode = (await import("qrcode")).default;
       qrDataUrl = await QRCode.toDataURL(reportId, { margin: 1, width: 140 });
     } catch {
       // sin QR si falla
@@ -213,7 +211,7 @@ export async function generateAndSharePDFSafe(
   } catch (e) {
     console.warn("[PDF]", e);
     return {
-      reportId: `pdf-${Date.now()}`,
+      reportId: generateReportId(),
       error: PDF_ERROR_MENSAJE_DATOS_GUARDADOS,
     };
   }

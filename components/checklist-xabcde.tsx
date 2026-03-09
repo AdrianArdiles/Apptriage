@@ -28,6 +28,7 @@ import { sanitizeFirestoreData } from "@/lib/clean-object";
 import { getOperadorId, getUnidadId, getAtendidoPor } from "@/lib/operador-storage";
 import { syncIntervencionToFirebase, removeIntervencionFromFirebase } from "@/lib/firebase-intervenciones";
 import { postAtencion } from "@/lib/api";
+import { generateReportId } from "@/lib/report-id";
 import { hapticImpactMedium } from "@/lib/haptics";
 import { ToastTimestamp } from "@/components/toast-timestamp";
 import { StickyFooter } from "@/components/sticky-footer";
@@ -473,11 +474,6 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
       diagnostico: diagnosticoPresuntivo ?? undefined,
     };
   };
-
-  /** Genera un ID único para el reporte (mismo formato que el PDF). */
-  const generateReportId = React.useCallback(() => {
-    return `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  }, []);
 
   /** Flujo FINALIZAR ATENCIÓN: solo API Vercel → si OK, PDF → reset y redirección al Panel de Gestión. */
   const handleFinalizarAtencion = async () => {

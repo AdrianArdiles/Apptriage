@@ -3,23 +3,24 @@ import autoTable from "jspdf-autotable";
 import { getOperadorId, getUnidadId, getAtendidoPor } from "@/lib/operador-storage";
 import type { ReportSummaryData } from "@/lib/report-summary";
 
-const TITLE = "INFORME DE ATENCIÓN PREHOSPITALARIA";
+const TITLE = "HISTORIA CLÍNICA PREHOSPITALARIA";
 const SUBTITLE = "AMBULANCIA PRO";
 const MARGIN = 14;
 const PAGE_W = 210;
 const PAGE_H = 297;
-const LINE_HEIGHT = 5.5;
+const LINE_HEIGHT = 5;
 const LOGO_HEIGHT_MM = 10;
 const LOGO_WIDTH_MM = 24;
 const BANDA_ROJA_ANCHO = 5;
 const QR_SIZE_MM = 18;
-const DIVIDER_COLOR = [180, 180, 180] as [number, number, number];
+const N_R = "N/R";
+const BLUE_DARK: [number, number, number] = [30, 58, 138];
+const SECTION_BG: [number, number, number] = [248, 249, 250];
+const SECTION_BORDER: [number, number, number] = [226, 232, 240];
 
 export type PDFExportOptions = {
   logoDataUrl?: string;
-  /** ID de la intervención (para QR y trazabilidad). */
   reportId?: string;
-  /** Data URL del código QR generado a partir de reportId. */
   qrDataUrl?: string;
 };
 
@@ -27,94 +28,40 @@ function getContentX(esNivelRojo: boolean): number {
   return MARGIN + (esNivelRojo ? BANDA_ROJA_ANCHO : 0);
 }
 
-function sectionTitle(doc: jsPDF, y: number, text: string, contentX: number): number {
-  doc.setFontSize(11);
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(40, 40, 40);
-  doc.text(text, contentX, y);
-  return y + LINE_HEIGHT + 2;
+function drawHeaderDivider(doc: jsPDF, y: number, contentX: number): number {
+  doc.setDrawColor(...BLUE_DARK);
+  doc.setLineWidth(0.8);
+  doc.line(contentX, y, PAGE_W - MARGIN, y);
+  return y + 5;
 }
 
-function sectionLine(doc: jsPDF, y: number, label: string, value: string, contentX: number, indent = 0): number {
+function sectionTitleWithBg(doc: jsPDF, y: number, text: string, contentX: number): number {
+  const w = PAGE_W - contentX - MARGIN;
+  const titleH = 8;
+  doc.setFillColor(...SECTION_BG);
+  doc.setDrawColor(...SECTION_BORDER);
+  doc.setLineWidth(0.2);
+  doc.rect(contentX, y - 5, w, titleH, "FD");
+  doc.rect(contentX, y - 5, w, titleH, "S");
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(30, 41, 59);
+  doc.text(text, contentX + 3, y + 0.5);
+  return y + titleH - 2;
+}
+
+function sectionLine(doc: jsPDF, y: number, label: string, value: string, contentX: number): number {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.setTextColor(60, 60, 60);
-  doc.text(`${label}: ${value || "—"}`, contentX + 2 + indent, y);
+  doc.setTextColor(51, 65, 85);
+  const text = value?.trim() ? `${label}: ${value}` : `${label}: —`;
+  doc.text(text, contentX + 3, y);
   return y + LINE_HEIGHT;
 }
 
-/** Línea divisoria elegante (doble línea). */
-function drawDivider(doc: jsPDF, y: number, contentX: number): number {
-  const xStart = contentX;
-  const xEnd = PAGE_W - MARGIN;
-  doc.setDrawColor(...DIVIDER_COLOR);
-  doc.setLineWidth(0.15);
-  doc.line(xStart, y, xEnd, y);
-  doc.line(xStart, y + 1.2, xEnd, y + 1.2);
-  return y + 4;
-}
-
-function drawSectionBlock(doc: jsPDF, yStart: number, yEnd: number, contentX: number): void {
-  const w = PAGE_W - MARGIN - contentX - MARGIN;
-  doc.setDrawColor(200, 200, 200);
-  doc.setLineWidth(0.2);
-  doc.setFillColor(252, 252, 252);
-  doc.rect(contentX, yStart - 3, w, yEnd - yStart + 5, "FD");
-  doc.rect(contentX, yStart - 3, w, yEnd - yStart + 5, "S");
-}
-
-/** Bloque diagnóstico CIE-11: bordes redondeados, tipografía técnica (monospace), destacado. */
-function drawBloqueCIE11(
-  doc: jsPDF,
-  y: number,
-  nombre: string,
-  cie11: string,
-  contentX: number
-): number {
-  const x = contentX + 2;
-  const w = PAGE_W - contentX - MARGIN - 4;
-  const blockH = 18;
-  const r = 2;
-  const boxX = contentX;
-  const boxY = y - 2;
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(148, 163, 184);
-  doc.setLineWidth(0.35);
-  if (typeof (doc as unknown as { roundedRect?: unknown }).roundedRect === "function") {
-    (doc as unknown as { roundedRect: (x: number, y: number, w: number, h: number, rx: number, ry: number, s: string) => void }).roundedRect(boxX, boxY, w + 4, blockH, r, r, "FD");
-  } else {
-    doc.rect(boxX, boxY, w + 4, blockH, "FD");
-  }
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(7);
-  doc.setTextColor(100, 116, 139);
-  doc.text("DIAGNÓSTICO CIE-11", x, y + 2);
-
-  doc.setFont("courier", "bold");
-  doc.setFontSize(11);
-  doc.setTextColor(15, 23, 42);
-  const codigoTexto = cie11 ? `[${cie11}]` : "";
-  doc.text(codigoTexto, x, y + 8);
-  const codeWidth = doc.getTextWidth(codigoTexto);
-  doc.setFont("courier", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(30, 41, 59);
-  doc.text(nombre.trim(), x + codeWidth + (codigoTexto ? 3 : 0), y + 8);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(7);
-  doc.setTextColor(100, 116, 139);
-  doc.text("Impresión clínica · Clasificación Internacional de Enfermedades 11.ª revisión", x, y + 13);
-  return y + blockH + 3;
-}
-
-/** Banda roja lateral para triaje Nivel 1 (Rojo). */
 function drawBandaRoja(doc: jsPDF): void {
   doc.setFillColor(185, 28, 28);
   doc.rect(0, 0, BANDA_ROJA_ANCHO, PAGE_H, "F");
-  doc.setFillColor(220, 38, 38);
-  doc.rect(0.5, 0, BANDA_ROJA_ANCHO - 0.5, PAGE_H, "F");
   doc.setFontSize(6);
   doc.setTextColor(255, 255, 255);
   doc.setFont("helvetica", "bold");
@@ -122,43 +69,37 @@ function drawBandaRoja(doc: jsPDF): void {
   doc.text("ROJO", 1, 25);
 }
 
-/** Espacio de firma y sello oficial. */
-function drawFirmaSello(doc: jsPDF, y: number, contentX: number): number {
+function drawFirmaPie(doc: jsPDF, y: number, contentX: number, reportId?: string): number {
   const x = contentX + 2;
-  const w = 70;
-  const h = 28;
-  doc.setDrawColor(150, 150, 150);
-  doc.setLineWidth(0.4);
-  doc.setFillColor(250, 250, 250);
+  const w = 75;
+  const h = 26;
+  doc.setDrawColor(...SECTION_BORDER);
+  doc.setLineWidth(0.3);
+  doc.setFillColor(252, 252, 252);
   doc.rect(x, y, w, h, "FD");
   doc.rect(x, y, w, h, "S");
 
-  const atendidoPor = getAtendidoPor();
-  const texto = atendidoPor || getOperadorId() || "Paramédico";
+  const atendidoPor = getAtendidoPor() || getOperadorId() || "Paramédico";
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
-  doc.setTextColor(40, 40, 40);
-  const lines = doc.splitTextToSize(texto, w - 4);
-  doc.text(lines, x + 4, y + 10);
+  doc.setTextColor(30, 41, 59);
+  const lines = doc.splitTextToSize(atendidoPor, w - 6);
+  doc.text(lines, x + 4, y + 8);
 
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(7);
-  doc.setTextColor(100, 100, 100);
-  doc.text("Firma digital · Documento oficial", x + 4, y + 20);
-  doc.setDrawColor(180, 180, 180);
-  doc.setLineWidth(0.2);
-  doc.line(x + 4, y + 22, x + w - 4, y + 22);
   doc.setFontSize(6);
-  doc.setTextColor(120, 120, 120);
-  doc.text("Generado electrónicamente — Ambulancia Pro", x + 4, y + 26);
-  return y + h + 6;
+  doc.setTextColor(100, 116, 139);
+  doc.text("Firma digital · Matrícula / ID operador", x + 4, y + 16);
+  doc.text("Documento generado electrónicamente", x + 4, y + 21);
+  if (reportId) doc.text(`ID: ${reportId}`, x + 4, y + 25);
+
+  doc.setFontSize(5.5);
+  doc.setTextColor(148, 163, 184);
+  doc.text("Este documento tiene validez legal como registro de atención prehospitalaria.", contentX, y + h + 6);
+  return y + h + 12;
 }
 
-/**
- * Normaliza datos para el PDF: acepta tanto ReportSummaryData como objetos con claves alternativas
- * (p. ej. desde localStorage o historial) para que los campos no queden vacíos en la APK.
- */
-function normalizeReportData(data: ReportSummaryData): ReportSummaryData {
+function normalizeReportData(data: ReportSummaryData): ReportSummaryData & { edad?: string; genero?: string; glucosa?: string } {
   const d = data as Record<string, unknown>;
   return {
     ...data,
@@ -181,16 +122,20 @@ function normalizeReportData(data: ReportSummaryData): ReportSummaryData {
     pulse: data.pulse ?? (d.pulse as number) ?? undefined,
     bp_systolic: data.bp_systolic ?? (d.bp_systolic as number) ?? undefined,
     bp_diastolic: data.bp_diastolic ?? (d.bp_diastolic as number) ?? undefined,
+    edad: (d.edad as string) ?? undefined,
+    genero: (d.genero as string) ?? undefined,
+    glucosa: (d.glucosa as string) ?? undefined,
   };
 }
 
 /**
- * Genera el PDF del informe con diseño profesional: bloques, CIE-11 destacado, QR, firma y banda roja si aplica.
+ * Genera el PDF como Historia Clínica Prehospitalaria: estructura clínica, secciones con fondo,
+ * tabla de signos vitales, Glasgow, CIE-11 destacado, observaciones y pie legal.
  */
 export function exportToPDF(data: ReportSummaryData, options?: PDFExportOptions): jsPDF {
-  const normalized = normalizeReportData(data);
+  const n = normalizeReportData(data);
   const doc = new jsPDF({ unit: "mm", format: "a4" });
-  const esNivelRojo = normalized.nivel_gravedad === 5;
+  const esNivelRojo = n.nivel_gravedad === 5;
   if (esNivelRojo) drawBandaRoja(doc);
 
   let y = 14;
@@ -200,143 +145,161 @@ export function exportToPDF(data: ReportSummaryData, options?: PDFExportOptions)
     try {
       doc.addImage(options.qrDataUrl, "PNG", PAGE_W - MARGIN - QR_SIZE_MM, y, QR_SIZE_MM, QR_SIZE_MM);
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(6);
+      doc.setFontSize(5.5);
       doc.setTextColor(100, 116, 139);
-      doc.text("Validación", PAGE_W - MARGIN - QR_SIZE_MM, y + QR_SIZE_MM + 3);
+      doc.text("Validación", PAGE_W - MARGIN - QR_SIZE_MM, y + QR_SIZE_MM + 2.5);
     } catch {
-      // si falla la imagen QR, seguimos sin ella
+      // sin QR si falla
     }
   }
 
   if (options?.logoDataUrl) {
     doc.addImage(options.logoDataUrl, "PNG", contentX, y, LOGO_WIDTH_MM, LOGO_HEIGHT_MM);
-    y += LOGO_HEIGHT_MM + 3;
+    y += LOGO_HEIGHT_MM + 2;
   } else {
-    y += 4;
+    y += 2;
   }
 
-  doc.setFontSize(16);
+  doc.setFontSize(14);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(15, 23, 42);
   doc.text(TITLE, contentX, y);
-  y += 6;
+  y += 5;
   doc.setFontSize(11);
-  doc.setTextColor(37, 99, 235);
+  doc.setTextColor(...BLUE_DARK);
   doc.text(SUBTITLE, contentX, y);
-  y += 8;
+  y += 5;
+  y = drawHeaderDivider(doc, y, contentX);
+  y += 4;
 
-  y = drawDivider(doc, y, contentX);
+  // ─── 1. DATOS DEL PACIENTE ──────────────────────────────────────
+  y = sectionTitleWithBg(doc, y, "1. DATOS DEL PACIENTE", contentX);
+  y += 2;
+  y = sectionLine(doc, y, "Nombre completo", n.nombre_paciente?.trim() ?? "", contentX);
+  y = sectionLine(doc, y, "DNI / ID", [n.dni, n.paciente_id].filter(Boolean).join(" · ") || "", contentX);
+  y = sectionLine(doc, y, "Edad", (n as { edad?: string }).edad?.trim() ?? N_R, contentX);
+  y = sectionLine(doc, y, "Género", (n as { genero?: string }).genero?.trim() ?? N_R, contentX);
+  y = sectionLine(doc, y, "Nº historia / Identificador", n.paciente_id ?? N_R, contentX);
+  y += 4;
 
-  // ─── 1. IDENTIFICACIÓN ─────────────────────────────────────────
-  const idStart = y;
-  y = sectionTitle(doc, y, "1. IDENTIFICACIÓN", contentX);
-  y = sectionLine(doc, y, "ID del paramédico", getOperadorId() || "—", contentX);
-  y = sectionLine(doc, y, "N° de Unidad / Móvil", getUnidadId() || "—", contentX);
-  y = sectionLine(doc, y, "ID / Nº historia", normalized.paciente_id ?? "", contentX);
-  y = sectionLine(doc, y, "Nombre", normalized.nombre_paciente?.trim() ?? "", contentX);
-  y = sectionLine(doc, y, "DNI", normalized.dni?.trim() ?? "", contentX);
-  y = sectionLine(doc, y, "Observaciones", normalized.sintomas_texto?.trim() ?? "", contentX);
-  const atendidoPor = getAtendidoPor();
-  if (atendidoPor) y = sectionLine(doc, y, "Atendido por", atendidoPor, contentX);
-  y = sectionLine(
-    doc,
-    y,
-    "Hora de inicio",
-    normalized.hora_inicio_atencion ? new Date(normalized.hora_inicio_atencion).toLocaleString("es-ES") : "—",
-    contentX
-  );
+  // ─── 2. SIGNOS VITALES (tabla/cajas) ────────────────────────────
+  y = sectionTitleWithBg(doc, y, "2. SIGNOS VITALES", contentX);
   y += 3;
-  drawSectionBlock(doc, idStart, y, contentX);
-  y += 8;
+  const sv = n.signos_vitales ?? {};
+  const ta = sv.tensionArterial ?? (n.bp_systolic != null && n.bp_diastolic != null ? `${n.bp_systolic}/${n.bp_diastolic}` : null);
+  const fc = sv.frecuenciaCardiaca ?? n.pulse;
+  const fr = sv.frecuenciaRespiratoria ?? n.respiration_rate;
+  const sat = sv.saturacionOxigeno;
+  const temp = sv.temperatura;
+  const glucosa = (n as { glucosa?: string }).glucosa;
 
-  // ─── 2. EVALUACIÓN XABCDE ──────────────────────────────────────
-  y = drawDivider(doc, y, contentX);
-  const xabcdeStart = y;
-  y = sectionTitle(doc, y, "2. EVALUACIÓN XABCDE", contentX);
-  const xabcdeItems = [
-    { letra: "X", titulo: "eXanguinación" },
-    { letra: "A", titulo: "Vía aérea" },
-    { letra: "B", titulo: "Respiración" },
-    { letra: "C", titulo: "Circulación" },
-    { letra: "D", titulo: "Discapacidad" },
-    { letra: "E", titulo: "Exposición" },
+  const vitalLabels = [
+    ["TA (mmHg)", ta ?? N_R],
+    ["FC (lpm)", fc != null ? String(fc) : N_R],
+    ["FR (/min)", fr != null ? String(fr) : N_R],
+    ["SatO₂ (%)", sat != null ? String(sat) : N_R],
+    ["Temp (°C)", temp != null ? String(temp) : N_R],
+    ["Glucosa", glucosa?.trim() ?? N_R],
   ];
+  const colW = (PAGE_W - contentX - MARGIN - 2) / 6;
+  const boxH = 10;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(6);
+  doc.setTextColor(71, 85, 105);
+  vitalLabels.forEach(([label], i) => {
+    const x = contentX + 2 + i * (colW + 0.3);
+    doc.setFillColor(...SECTION_BG);
+    doc.rect(x, y - 3, colW, 4, "FD");
+    doc.text(label, x + 1, y + 0.5);
+  });
+  y += 5;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
-  doc.setTextColor(60, 60, 60);
-  for (const item of xabcdeItems) {
-    const estado = normalized.xabcde?.[item.letra] ?? "pendiente";
-    doc.text(`  ${item.letra} — ${item.titulo}: ${String(estado).toUpperCase()}`, contentX + 2, y);
-    y += LINE_HEIGHT;
-  }
-  y += 3;
-  drawSectionBlock(doc, xabcdeStart, y, contentX);
-  y += 8;
+  doc.setTextColor(15, 23, 42);
+  vitalLabels.forEach(([, value], i) => {
+    const x = contentX + 2 + i * (colW + 0.3);
+    doc.setDrawColor(...SECTION_BORDER);
+    doc.rect(x, y - 2, colW, boxH, "S");
+    doc.text(String(value).slice(0, 8), x + 2, y + 3);
+  });
+  y += boxH + 5;
 
-  // ─── 3. IMPRESIÓN CLÍNICA (bloque especial CIE-11) ──────────────
-  y = drawDivider(doc, y, contentX);
-  if (normalized.impresion_clinica?.nombre) {
-    y = drawBloqueCIE11(
-      doc,
-      y,
-      normalized.impresion_clinica.nombre,
-      normalized.impresion_clinica.cie11 ?? "",
-      contentX
-    );
-  } else if (normalized.diagnostico) {
-    y = drawBloqueCIE11(
-      doc,
-      y,
-      normalized.diagnostico.termino_comun,
-      normalized.diagnostico.codigo_cie ?? "",
-      contentX
-    );
+  // ─── 3. EVALUACIÓN NEUROLÓGICA (Glasgow) ─────────────────────────
+  y = sectionTitleWithBg(doc, y, "3. EVALUACIÓN NEUROLÓGICA — ESCALA DE GLASGOW (GCS)", contentX);
+  y += 2;
+  if (n.glasgow) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(51, 65, 85);
+    doc.text(`  Ocular (E): ${n.glasgow.E}   ·   Verbal (V): ${n.glasgow.V}   ·   Motor (M): ${n.glasgow.M}   →   Total GCS: ${n.glasgow.puntaje_glasgow}`, contentX + 3, y + 2);
+    y += LINE_HEIGHT + 4;
+  } else if (n.glasgow_score != null) {
+    doc.text(`  Puntaje Glasgow: ${n.glasgow_score}`, contentX + 3, y + 2);
+    y += LINE_HEIGHT + 4;
   } else {
-    const blockY = y;
-    y = sectionTitle(doc, y, "3. IMPRESIÓN CLÍNICA", contentX);
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(100, 100, 100);
-    doc.text("  Sin diagnóstico registrado.", contentX + 2, y + 2);
-    y += 10;
-    drawSectionBlock(doc, blockY, y, contentX);
+    doc.text("  No registrado.", contentX + 3, y + 2);
+    y += LINE_HEIGHT + 4;
   }
-  y += 6;
 
-  // ─── 4. SIGNOS VITALES Y GLASGOW ───────────────────────────────
-  y = drawDivider(doc, y, contentX);
-  const signosStart = y;
-  y = sectionTitle(doc, y, "4. SIGNOS VITALES Y DATOS CLÍNICOS", contentX);
-  const sv = normalized.signos_vitales ?? {};
-  const ta =
-    sv.tensionArterial ??
-    (normalized.bp_systolic != null && normalized.bp_diastolic != null ? `${normalized.bp_systolic}/${normalized.bp_diastolic}` : "");
-  y = sectionLine(doc, y, "Tensión arterial", ta, contentX, 2);
-  y = sectionLine(doc, y, "Pulso / FC (lpm)", String(sv.frecuenciaCardiaca ?? normalized.pulse ?? ""), contentX, 2);
-  y = sectionLine(doc, y, "Saturación O₂ (%)", String(sv.saturacionOxigeno ?? ""), contentX, 2);
-  y = sectionLine(doc, y, "Frec. respiratoria (/min)", String(sv.frecuenciaRespiratoria ?? normalized.respiration_rate ?? ""), contentX, 2);
-  y = sectionLine(doc, y, "Pérdida de sangre", normalized.blood_loss ?? "", contentX, 2);
-  y = sectionLine(doc, y, "Estado vía aérea", normalized.airway_status ?? "", contentX, 2);
-  if (normalized.glasgow) {
+  // ─── 4. DIAGNÓSTICO Y OBSERVACIONES ───────────────────────────
+  y = sectionTitleWithBg(doc, y, "4. DIAGNÓSTICO Y OBSERVACIONES", contentX);
+  y += 2;
+
+  const diag = n.impresion_clinica ?? (n.diagnostico ? { nombre: n.diagnostico.termino_comun, cie11: n.diagnostico.codigo_cie ?? "" } : null);
+  if (diag) {
+    doc.setFillColor(241, 245, 249);
+    doc.setDrawColor(148, 163, 184);
+    doc.rect(contentX + 2, y - 1, PAGE_W - contentX - MARGIN - 4, 14, "FD");
+    doc.rect(contentX + 2, y - 1, PAGE_W - contentX - MARGIN - 4, 14, "S");
+    doc.setFont("courier", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(30, 58, 138);
+    doc.text(`CIE-11: ${diag.cie11 || N_R}`, contentX + 5, y + 5);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
-    doc.text(
-      `  Glasgow: E=${normalized.glasgow.E} V=${normalized.glasgow.V} M=${normalized.glasgow.M} → Total ${normalized.glasgow.puntaje_glasgow}`,
-      contentX + 2,
-      y + 2
-    );
-    y += LINE_HEIGHT + 2;
+    doc.setTextColor(30, 41, 59);
+    doc.text(diag.nombre?.trim() ?? "", contentX + 5, y + 10);
+    y += 16;
   }
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(71, 85, 105);
+  doc.text("Observaciones / Síntomas", contentX + 3, y + 2);
+  y += 4;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(51, 65, 85);
+  const sintomas = n.sintomas_texto?.trim() || "—";
+  const sintomasLines = doc.splitTextToSize(sintomas, PAGE_W - contentX - MARGIN - 6);
+  doc.text(sintomasLines, contentX + 3, y + 2);
+  y += sintomasLines.length * LINE_HEIGHT + 4;
+
+  // ─── 5. EVALUACIÓN XABCDE (resumida) ───────────────────────────
+  y = sectionTitleWithBg(doc, y, "5. EVALUACIÓN XABCDE", contentX);
   y += 2;
-  drawSectionBlock(doc, signosStart, y, contentX);
+  const xabcdeItems = ["X", "A", "B", "C", "D", "E"];
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8);
+  doc.setTextColor(51, 65, 85);
+  const xabcdeLine = xabcdeItems.map((l) => `${l}:${(n.xabcde?.[l] ?? "—").toUpperCase()}`).join("   ");
+  doc.text(xabcdeLine, contentX + 3, y + 2);
   y += 8;
 
-  // ─── 5. EVENTOS REGISTRADOS ────────────────────────────────────
-  y = sectionTitle(doc, y, "5. EVENTOS REGISTRADOS (TIMESTAMPS)", contentX);
+  // ─── 6. OTROS DATOS CLÍNICOS ───────────────────────────────────
+  y = sectionTitleWithBg(doc, y, "6. OTROS DATOS CLÍNICOS", contentX);
   y += 2;
-  const eventos = normalized.timestamp_eventos ?? [];
+  y = sectionLine(doc, y, "Pérdida de sangre", n.blood_loss ?? N_R, contentX);
+  y = sectionLine(doc, y, "Vía aérea", n.airway_status ?? N_R, contentX);
+  y = sectionLine(doc, y, "Hora de inicio", n.hora_inicio_atencion ? new Date(n.hora_inicio_atencion).toLocaleString("es-ES") : N_R, contentX);
+  y = sectionLine(doc, y, "Operador / Unidad", [getOperadorId(), getUnidadId()].filter(Boolean).join(" · ") || N_R, contentX);
+  y += 4;
+
+  // ─── 7. LÍNEA DE TIEMPO DE EVENTOS (compacta) ──────────────────
+  y = sectionTitleWithBg(doc, y, "7. LÍNEA DE TIEMPO DE EVENTOS", contentX);
+  y += 2;
+  const eventos = n.timestamp_eventos ?? [];
   const tableBody = eventos.map((ev) => [
-    new Date(ev.hora).toLocaleString("es-ES", { dateStyle: "short", timeStyle: "medium" }),
+    new Date(ev.hora).toLocaleString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
     ev.evento,
   ]);
   autoTable(doc, {
@@ -345,41 +308,30 @@ export function exportToPDF(data: ReportSummaryData, options?: PDFExportOptions)
     body: tableBody.length > 0 ? tableBody : [["—", "Ninguno"]],
     margin: { left: contentX },
     tableWidth: PAGE_W - contentX - MARGIN,
-    theme: "grid",
-    headStyles: { fillColor: [66, 66, 66], fontSize: 8 },
-    bodyStyles: { fontSize: 8 },
-    styles: { cellPadding: 2.5 },
+    theme: "plain",
+    headStyles: { fillColor: SECTION_BG, textColor: [30, 41, 59], fontStyle: "bold", fontSize: 7 },
+    bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+    styles: { cellPadding: 1.5 },
   });
+  const tableEndY = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y + 12;
+  y = tableEndY + 6;
 
-  const finalTableY = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y + 18;
-  y = finalTableY + 10;
+  // ─── FIRMA Y PIE LEGAL ──────────────────────────────────────────
+  y = drawFirmaPie(doc, y, contentX, options?.reportId);
 
-  // ─── FIRMA Y SELLO ─────────────────────────────────────────────
-  y = drawFirmaSello(doc, y, contentX);
-
-  if (options?.reportId) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(6);
-    doc.setTextColor(140, 140, 140);
-    doc.text(`ID: ${options.reportId}`, contentX, PAGE_H - 8);
-  }
-  doc.setTextColor(120, 120, 120);
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5.5);
+  doc.setTextColor(148, 163, 184);
   doc.text(`Generado: ${new Date().toLocaleString("es-ES")}`, contentX, PAGE_H - 5);
 
   return doc;
 }
 
-/**
- * Devuelve el PDF como Blob (para web) o como base64 (para Capacitor).
- */
 export function getPDFBlob(data: ReportSummaryData, options?: PDFExportOptions): Blob {
   const doc = exportToPDF(data, options);
   return doc.output("blob");
 }
 
-/**
- * Devuelve el PDF en base64 para guardar con Filesystem y compartir en Capacitor.
- */
 export function getPDFBase64(data: ReportSummaryData, options?: PDFExportOptions): string {
   const doc = exportToPDF(data, options);
   return doc.output("datauristring").split(",")[1] ?? "";
