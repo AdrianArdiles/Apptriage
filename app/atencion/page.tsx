@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { ChecklistXABCDE, type DatosEvaluacionInicial } from "@/components/checklist-xabcde";
+import { ToastTimestamp } from "@/components/toast-timestamp";
 import { LogoEkg } from "@/components/logo-ekg";
 import { TriageResult } from "@/components/triage-result";
 import { ModalConfirmacionIngreso } from "@/components/modal-confirmacion-ingreso";
@@ -92,6 +93,7 @@ function AtencionContent(): React.ReactElement | null {
   const [mensajeManager, setMensajeManager] = React.useState<MensajePayload | null>(null);
   const [movilId, setMovilId] = React.useState("");
   const [resetKey, setResetKey] = React.useState(0);
+  const [successToast, setSuccessToast] = React.useState<string | null>(null);
   const lastSentAtRef = React.useRef<string | null>(null);
 
   const refreshPendingCount = React.useCallback(() => setPendingCount(getReportQueue().length), []);
@@ -106,6 +108,12 @@ function AtencionContent(): React.ReactElement | null {
     setResetKey((k) => k + 1);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
+
+  const handleFinalizarSuccess = React.useCallback(() => {
+    setSuccessToast("Atención Guardada Correctamente");
+    handleResetAll();
+    setTimeout(() => setSuccessToast(null), 1500);
+  }, [handleResetAll]);
 
   React.useEffect(() => {
     if (mounted) setMovilId(getUnidadId() || getOperadorId() || "");
@@ -366,12 +374,13 @@ function AtencionContent(): React.ReactElement | null {
                 <SpinnerMedico label="Enviando reporte a central…" />
               </div>
             )}
+            <ToastTimestamp message={successToast} onDismiss={() => setSuccessToast(null)} />
             <ChecklistXABCDE
               key={resetKey}
               onSubmit={handleSubmit}
               isSubmitting={isSubmitting}
               onNuevaAtencion={handleResetAll}
-              onFinalizarSuccess={() => router.push("/manager")}
+              onFinalizarSuccess={handleFinalizarSuccess}
               userEmail={user?.email ?? undefined}
             />
           </div>

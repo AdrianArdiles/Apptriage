@@ -163,7 +163,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
 
   const TOTAL_STEPS = 12;
 
-  /** Reset completo para "Nueva Atención": incluye buscador de diagnósticos CIE-11 (diagnosticoPresuntivo). */
+  /** Reset atómico: limpia todo el estado del checklist (triaje, signos vitales, paciente, eventos, diagnóstico). Combinado con onFinalizarSuccess → clearFichaClinica + removeIntervencionFromFirebase en el padre, deja la app lista para el siguiente paciente. */
   const resetForm = React.useCallback(() => {
     setHoraInicio("");
     setInicioRegistrado(false);
@@ -568,13 +568,12 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
     } catch {
       setToastMessage(PDF_ERROR_MENSAJE_DATOS_GUARDADOS);
     } finally {
-      // Garantizar que la UI no quede bloqueada y la app quede lista para el siguiente paciente.
       setFinalizando(false);
       resetForm();
       if (onFinalizarSuccess) {
-        setTimeout(() => onFinalizarSuccess(), 0);
+        onFinalizarSuccess();
       } else {
-        setTimeout(() => handleNuevaAtencionClick(), 0);
+        handleNuevaAtencionClick();
       }
     }
   };
@@ -697,59 +696,14 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
             </CardContent>
           </Card>
         );
-      case 9: {
-        const eventosRecientes = timestampEventos.slice(-8).reverse();
+      case 9:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
             <CardHeader className="p-2 pb-1">
-              <CardTitle className="text-sm text-slate-100">Panel de Eventos · Acciones</CardTitle>
-              <p className="text-[10px] text-slate-400">Un toque = registro con hora actual. Sin scroll.</p>
+              <CardTitle className="text-sm text-slate-100">Eventos · Cierre</CardTitle>
+              <p className="text-[10px] text-slate-400">Use la botonera de arriba para eventos rápidos. Registre «Llegada al Hospital» para habilitar Finalizar.</p>
             </CardHeader>
-            <CardContent className="space-y-3 p-2 pt-0">
-              {/* Botonera táctica: grid 3x2, siempre visible */}
-              <div className="grid grid-cols-3 gap-2">
-                {BOTONES_QUICK_GRID.map((b) => {
-                  const count = countByEvento(b.label);
-                  const isPulsing = pulseButtonKey === b.label;
-                  const isOtro = b.label === "Otro";
-                  return (
-                    <div key={b.label} className="relative">
-                      {!isOtro && count > 0 && (
-                        <span className="absolute -right-0.5 -top-0.5 z-10 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white">
-                          {count}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (isOtro) timestampInputRef.current?.focus();
-                          else agregarTimestamp(b.label);
-                        }}
-                        className={`relative min-h-[48px] w-full touch-manipulation rounded-xl border-2 px-2 py-2 text-xs font-semibold transition active:scale-[0.97] ${b.color} ${isPulsing ? "animate-button-flash" : ""}`}
-                      >
-                        {b.label}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              {/* Timeline compacto: últimos eventos */}
-              <div>
-                <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">Registro</p>
-                {eventosRecientes.length === 0 ? (
-                  <p className="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2 text-xs text-slate-500">Sin eventos aún</p>
-                ) : (
-                  <ul className="max-h-[72px] space-y-0.5 overflow-y-auto rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2 text-xs">
-                    {eventosRecientes.map((ev, i) => (
-                      <li key={`${ev.hora}-${eventosRecientes.length - 1 - i}`} className={`flex items-center gap-2 font-mono ${ev.hora === lastAddedHora ? "text-amber-300 animate-timestamp-in" : "text-slate-300"}`}>
-                        <span className="shrink-0 text-slate-500">{new Date(ev.hora).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-                        <span className="truncate">{ev.evento}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-              {/* Otro evento: una línea */}
+            <CardContent className="space-y-2 p-2 pt-0">
               <div className="flex gap-2">
                 <Input
                   ref={timestampInputRef}
@@ -764,18 +718,9 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
                   Registrar
                 </Button>
               </div>
-              {/* Único botón al final del flujo: cierre */}
-              <button
-                type="button"
-                onClick={() => agregarTimestamp(EVENTO_CIERRE)}
-                className={`min-h-[52px] w-full touch-manipulation rounded-xl border-2 border-amber-500 bg-amber-500/90 px-4 py-3 text-sm font-bold uppercase text-zinc-900 shadow-lg transition active:scale-[0.98] hover:bg-amber-400 ${pulseButtonKey === EVENTO_CIERRE ? "animate-button-flash" : ""}`}
-              >
-                Llegada al Hospital
-              </button>
             </CardContent>
           </Card>
         );
-      }
       case 10:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
@@ -850,12 +795,18 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
 
   const rcpCount = countByEvento("Registro RCP");
   const fabPulsing = pulseButtonKey === "Registro RCP";
+  const ultimos3Eventos = timestampEventos.slice(-3).reverse();
+  const llegadaHospitalRegistrada = timestampEventos.some((e) => e.evento === EVENTO_CIERRE);
+  const puedeFinalizarAtencion = llegadaHospitalRegistrada;
 
   return (
-    <form onSubmit={handleSubmit} className="relative flex min-h-[100dvh] min-h-[100vh] flex-col">
+    <form
+      onSubmit={handleSubmit}
+      className="relative flex h-[100dvh] h-screen flex-col overflow-hidden"
+    >
       <ToastTimestamp message={toastMessage} onDismiss={() => setToastMessage(null)} />
 
-      {/* FAB RCP: siempre visible, fijo sobre la barra de navegación */}
+      {/* FAB RCP: fijo sobre la barra, siempre visible */}
       <div
         className="fixed right-3 z-40 flex h-11 w-11 items-center justify-center rounded-full shadow-lg backdrop-blur-md transition active:scale-95"
         style={{
@@ -879,24 +830,88 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
         </button>
       </div>
 
-      {/* Barra de progreso compacta (no hace scroll) */}
-      <div className="mb-1.5 shrink-0">
+      {/* Header fijo: indicador de pasos (sin scroll) */}
+      <header className="shrink-0 border-b border-slate-700/50 bg-[#1e293b] px-2 pt-1.5 pb-1.5">
         <p className="mb-0.5 text-[10px] font-medium text-slate-400">{progressText}</p>
         <div className="h-1 w-full overflow-hidden rounded-full bg-slate-800">
           <div className="h-full rounded-full transition-all duration-300" style={{ width: `${progressPct}%`, background: `linear-gradient(90deg, ${RED_EMERGENCY} 0%, ${BLUE_MEDICAL} 100%)` }} />
         </div>
+      </header>
+
+      {/* Botonera de Mando: grilla táctica + log últimos 3 + Llegada al Hospital (siempre a mano) */}
+      <section className="shrink-0 border-b border-slate-700/50 bg-slate-800/60 px-2 py-2" aria-label="Botonera de eventos">
+        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Eventos · Un toque = registro</p>
+        <div className="flex gap-2">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-1.5">
+            {BOTONES_QUICK_GRID.map((b) => {
+              const count = countByEvento(b.label);
+              const isPulsing = pulseButtonKey === b.label;
+              const isOtro = b.label === "Otro";
+              return (
+                <div key={b.label} className="relative">
+                  {!isOtro && count > 0 && (
+                    <span className="absolute -right-0.5 -top-0.5 z-10 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-blue-500 px-0.5 text-[9px] font-bold text-white">
+                      {count}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isOtro) timestampInputRef.current?.focus();
+                      else agregarTimestamp(b.label);
+                    }}
+                    className={`relative min-h-[40px] w-full touch-manipulation rounded-lg border-2 px-1.5 py-1.5 text-[11px] font-semibold transition active:scale-[0.97] ${b.color} ${isPulsing ? "animate-button-flash" : ""}`}
+                  >
+                    {b.label}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="w-[100px] shrink-0 rounded-lg border border-slate-600 bg-slate-800/80 px-1.5 py-1">
+            <p className="mb-0.5 text-[9px] font-medium text-slate-500">Últimos 3</p>
+            {ultimos3Eventos.length === 0 ? (
+              <p className="text-[10px] text-slate-500">—</p>
+            ) : (
+              <ul className="space-y-0.5 text-[10px]">
+                {ultimos3Eventos.map((ev, i) => (
+                  <li key={`${ev.hora}-${i}`} className={`truncate font-mono ${ev.hora === lastAddedHora ? "text-amber-400" : "text-slate-400"}`} title={ev.evento}>
+                    {new Date(ev.hora).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })} {ev.evento}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => agregarTimestamp(EVENTO_CIERRE)}
+          className={`mt-1.5 flex min-h-[40px] w-full items-center justify-center rounded-lg border-2 font-bold transition active:scale-[0.98] ${
+            llegadaHospitalRegistrada
+              ? "border-emerald-500 bg-emerald-600/80 text-white"
+              : "border-amber-500 bg-amber-500/90 text-zinc-900 hover:bg-amber-400"
+          } ${pulseButtonKey === EVENTO_CIERRE ? "animate-button-flash" : ""}`}
+        >
+          {llegadaHospitalRegistrada ? "✓ Llegada al Hospital registrada" : "Llegada al Hospital (habilita Finalizar)"}
+        </button>
+      </section>
+
+      {/* Cuerpo central: ÚNICO área con scroll */}
+      <div
+        className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-2 ${currentStep === 9 ? "pr-14" : ""}`}
+        style={{ paddingBottom: "calc(0.5rem + 3.5rem)" }}
+      >
+        <div className="px-2 pt-2">{renderStepContent()}</div>
       </div>
 
-      {/* Contenido con scroll; en paso Eventos (9) padding-right para que el FAB RCP no tape la botonera */}
-      <div className={`min-h-0 flex-1 overflow-y-auto pb-28 ${currentStep === 9 ? "pr-14" : ""}`}>{renderStepContent()}</div>
-
-      {/* Barra inferior FIJA: navegación y Finalizar siempre visibles sin scroll */}
+      {/* Barra de navegación FIJA (bottom: 0), siempre visible */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-30 flex w-full gap-2 border-t p-2 pb-[env(safe-area-inset-bottom,0.5rem)] backdrop-blur-md"
+        className="fixed bottom-0 left-0 right-0 z-30 flex w-full gap-2 border-t p-2 backdrop-blur-md"
         style={{
           backgroundColor: "rgba(30, 41, 59, 0.98)",
           borderColor: "rgba(37, 99, 235, 0.25)",
           boxShadow: "0 -4px 12px rgba(0,0,0,0.25)",
+          paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))",
         }}
       >
         <Button
@@ -920,11 +935,12 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
           <Button
             type="button"
             onClick={handleFinalizarAtencion}
-            disabled={finalizando}
+            disabled={finalizando || !puedeFinalizarAtencion}
+            title={!puedeFinalizarAtencion ? "Registre «Llegada al Hospital» en la botonera para habilitar" : undefined}
             className={`min-h-[44px] flex-1 text-sm font-semibold text-white ${BTN_GRADIENT} disabled:opacity-70`}
             style={BTN_GRADIENT_STYLE}
           >
-            {finalizando ? "Guardando…" : "FINALIZAR ATENCIÓN"}
+            {finalizando ? "Guardando…" : puedeFinalizarAtencion ? "FINALIZAR ATENCIÓN" : "Finalizar (registre Llegada)"}
           </Button>
         )}
       </div>
