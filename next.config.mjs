@@ -10,7 +10,7 @@ const nextConfig = {
   trailingSlash: false,
   images: { unoptimized: true },
 
-  // CORS para que la APK (Capacitor: capacitor://localhost, http://localhost) y la web puedan llamar a /api/*
+  // CORS maestro: orígenes APK (capacitor://localhost, http://localhost) y cualquier origen para /api/*
   async headers() {
     return [
       {

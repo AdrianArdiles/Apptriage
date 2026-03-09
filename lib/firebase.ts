@@ -1,3 +1,7 @@
+/**
+ * Firebase: Auth (login/registro), Firestore (authorized_users, users), Realtime (intervenciones, perfil).
+ * Atenciones están en Neon; no se usan Firestore/Realtime para atenciones en el flujo principal.
+ */
 import { initializeApp } from "firebase/app";
 import { getDatabase } from "firebase/database";
 import { getAuth } from "firebase/auth";

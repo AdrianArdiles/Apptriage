@@ -110,32 +110,33 @@ export async function signInWithGoogle() {
 }
 
 /**
- * Cerrar sesión. Guarda de seguridad: solo se intenta GoogleAuth.signOut() en WEB y cuando
- * el cliente de Google fue inicializado correctamente (no null). En nativo (Capacitor/Android)
- * NUNCA se llama a GoogleAuth.signOut() para evitar crash fatal (NullPointerException en
- * GoogleAuth.java cuando GoogleSignInClient es null, p. ej. usuario logueado por Email).
+ * Cerrar sesión. GoogleAuth.signOut() siempre envuelto en try/catch: si el cliente es null
+ * (p. ej. usuario logueado por Email en APK) no se lanza y se evita crash nativo.
+ * Se limpia estado local y se cierra sesión en Firebase.
  */
 export async function signOut(): Promise<void> {
-  if (Capacitor.isNativePlatform()) {
-    _googleAuthInitialized = false;
-    // Solo Firebase Auth; no tocar el plugin en nativo
-  } else {
+  try {
     try {
-      if (_googleAuthInitialized) {
-        try {
-          const { GoogleAuth } = await import("@codetrix-studio/capacitor-google-auth");
-          if (GoogleAuth && typeof GoogleAuth.signOut === "function") await GoogleAuth.signOut();
-        } catch {
-          /* ignorar */
-        }
-        _googleAuthInitialized = false;
+      const { GoogleAuth } = await import("@codetrix-studio/capacitor-google-auth");
+      if (GoogleAuth != null && typeof GoogleAuth.signOut === "function") {
+        await GoogleAuth.signOut();
       }
     } catch {
-      /* nunca fallar el signOut por el plugin */
+      /* Cliente null o error del plugin: solo seguir con Firebase signOut */
+    }
+  } catch {
+    /* Nunca fallar el signOut por el plugin */
+  }
+  _googleAuthInitialized = false;
+
+  const auth = getAuthInstance();
+  if (auth) {
+    try {
+      await firebaseSignOut(auth);
+    } catch {
+      /* Aún así limpiamos estado local */
     }
   }
-  const auth = getAuthInstance();
-  if (auth) await firebaseSignOut(auth);
 }
 
 /** Escuchar cambios de autenticación (persistencia de sesión) */

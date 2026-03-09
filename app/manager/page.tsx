@@ -1,471 +1,608 @@
 "use client";
 
 import * as React from "react";
-import dynamic from "next/dynamic";
-import { getHistorialPdfList, type HistorialPdfEntry } from "@/lib/historial-pdf-storage";
+import useSWR from "swr";
+import { getAtencionesFromApi, deleteAtencionApi } from "@/lib/api";
+import type { AtencionFromApi } from "@/lib/types-atenciones-api";
+import type { ReportSummaryData } from "@/lib/report-summary";
+import { generateAndDownloadPDF } from "@/lib/share-pdf";
 import {
-  subscribeIntervenciones,
-  type IntervencionPayload,
-} from "@/lib/firebase-intervenciones";
-import { sendMensaje, subscribeAllMensajes, type MensajePayload } from "@/lib/firebase-mensajes";
-
-const ManagerMap = dynamic(
-  () => import("@/components/manager-map").then((m) => ({ default: m.ManagerMap })),
-  { ssr: false, loading: () => <div className="h-[320px] rounded-xl border border-slate-600 bg-slate-800 flex items-center justify-center text-slate-400">Cargando mapa…</div> }
-);
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import type { NivelGravedad } from "@/lib/types";
 
 const CARD_BG = "#1e293b";
 const GOLD = "#eab308";
-const GOLD_DIM = "rgba(234, 179, 8, 0.2)";
 const RED_CRITICAL = "#dc2626";
-const ORANGE_WARNING = "#ea580c";
-const GREEN_READY = "#16a34a";
-const BLUE_BASE = "#2563eb";
+const AMBER = "#f59e0b";
+const GREEN = "#16a34a";
+const SLATE_400 = "#94a3b8";
+const BORDER = "rgba(51, 65, 85, 0.6)";
 
-const STEP_LABELS: Record<number, string> = {
-  0: "Inicio",
-  1: "X",
-  2: "A",
-  3: "B",
-  4: "C",
-  5: "D",
-  6: "E",
-  7: "Signos vitales",
-  8: "Glasgow",
-  9: "Timestamps",
-  10: "Paciente",
-  11: "Enviar",
+const NIVEL_LABELS: Record<NivelGravedad, string> = {
+  1: "Verde",
+  2: "Amarillo",
+  3: "Naranja",
+  4: "Rojo",
+  5: "Rojo crítico",
 };
 
+function getNivelGravedad(a: AtencionFromApi): NivelGravedad {
+  const n = a.data?.nivel_gravedad;
+  if (n != null && n >= 1 && n <= 5) return n as NivelGravedad;
+  return 3;
+}
+
+function triajeColor(nivel: NivelGravedad): { bg: string; text: string; glow: string } {
+  switch (nivel) {
+    case 5:
+    case 4:
+      return {
+        bg: "rgba(220, 38, 38, 0.25)",
+        text: "#fca5a5",
+        glow: "0 0 12px rgba(220, 38, 38, 0.5)",
+      };
+    case 3:
+    case 2:
+      return {
+        bg: "rgba(245, 158, 11, 0.25)",
+        text: "#fcd34d",
+        glow: "0 0 10px rgba(245, 158, 11, 0.4)",
+      };
+    default:
+      return {
+        bg: "rgba(22, 163, 74, 0.2)",
+        text: "#86efac",
+        glow: "0 0 8px rgba(22, 163, 74, 0.35)",
+      };
+  }
+}
+
+function isHoy(iso: string): boolean {
+  const d = new Date(iso);
+  const hoy = new Date();
+  return d.getFullYear() === hoy.getFullYear() && d.getMonth() === hoy.getMonth() && d.getDate() === hoy.getDate();
+}
+
+function duracionMinutos(createdAt: string, horaInicio?: string): number | null {
+  if (!horaInicio) return null;
+  const fin = new Date(createdAt).getTime();
+  const ini = new Date(horaInicio).getTime();
+  if (Number.isNaN(fin) || Number.isNaN(ini) || ini > fin) return null;
+  return Math.round((fin - ini) / 60000);
+}
+
+function exportToCSV(atenciones: AtencionFromApi[]): void {
+  const headers = [
+    "id",
+    "createdAt",
+    "nombrePaciente",
+    "pacienteId",
+    "dni",
+    "operadorId",
+    "unidadId",
+    "nivel_gravedad",
+    "sintomas_texto",
+    "diagnostico_codigo",
+    "hora_inicio",
+    "glasgow_score",
+    "ta",
+    "pulso",
+    "spo2",
+  ];
+  const rows = atenciones.map((a) => {
+    const d = a.data ?? {};
+    const sv = d.signos_vitales ?? {};
+    return [
+      a.id,
+      a.createdAt,
+      (a.nombrePaciente ?? "").replace(/"/g, '""'),
+      a.pacienteId ?? "",
+      (d.dni ?? "").replace(/"/g, '""'),
+      a.operadorId ?? "",
+      a.unidadId ?? "",
+      String(d.nivel_gravedad ?? ""),
+      (a.sintomas_texto ?? d.sintomas_texto ?? "").replace(/"/g, '""'),
+      a.diagnostico_codigo ?? (d.diagnostico as { codigo_cie?: string } | undefined)?.codigo_cie ?? "",
+      d.hora_inicio_atencion ?? "",
+      String(d.glasgow_score ?? ""),
+      sv.tensionArterial ?? (d.bp_systolic != null && d.bp_diastolic != null ? `${d.bp_systolic}/${d.bp_diastolic}` : ""),
+      String(d.pulse ?? sv.frecuenciaCardiaca ?? ""),
+      String(sv.saturacionOxigeno ?? ""),
+    ].map((c) => `"${String(c)}"`).join(",");
+  });
+  const csv = [headers.join(","), ...rows].join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `atenciones_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function ManagerPage(): React.ReactElement {
-  const [list, setList] = React.useState<HistorialPdfEntry[]>([]);
-  const [liveIntervenciones, setLiveIntervenciones] = React.useState<
-    Record<string, IntervencionPayload>
-  >({});
-  const [filterUnidad, setFilterUnidad] = React.useState<string>("");
-  const [filterOperador, setFilterOperador] = React.useState<string>("");
-  const [mensajeDraft, setMensajeDraft] = React.useState<Record<string, string>>({});
-  const [liveMensajes, setLiveMensajes] = React.useState<Record<string, MensajePayload>>({});
-  const [firebaseError, setFirebaseError] = React.useState<string | null>(null);
+  const { data: atenciones = [], mutate, isLoading, error } = useSWR<AtencionFromApi[]>(
+    "atenciones",
+    getAtencionesFromApi,
+    { refreshInterval: 30_000 }
+  );
 
-  const PRESETS = [
-    { label: "HOSPITAL LISTO", text: "[HOSPITAL LISTO]", color: GREEN_READY },
-    { label: "DIRIGIRSE A BASE", text: "[DIRIGIRSE A BASE]", color: BLUE_BASE },
-    { label: "CANCELAR AUXILIO", text: "[CANCELAR AUXILIO]", color: RED_CRITICAL },
-    { label: "CONFIRMAR ESTADO", text: "[CONFIRMAR ESTADO]", color: ORANGE_WARNING },
-  ] as const;
-
-  React.useEffect(() => {
-    setList(getHistorialPdfList());
-  }, []);
-
-  React.useEffect(() => {
-    const unsubscribe = subscribeIntervenciones(
-      (data) => {
-        setFirebaseError(null);
-        setLiveIntervenciones(data ?? {});
-      },
-      (err) => setFirebaseError(err?.message ?? "Error de conexión Firebase")
-    );
-    return unsubscribe;
-  }, []);
-
-  React.useEffect(() => {
-    const unsub = subscribeAllMensajes((data) => {
-      setLiveMensajes(data ?? {});
-    });
-    return unsub;
-  }, []);
-
-  const liveEntries = React.useMemo(() => {
-    return Object.entries(liveIntervenciones).map(([key, payload]) => ({ key, ...payload }));
-  }, [liveIntervenciones]);
-
-  const unidades = React.useMemo(() => {
-    const set = new Set<string>();
-    list.forEach((e) => {
-      const u = e.unidadId?.trim();
-      if (u) set.add(u);
-    });
-    return Array.from(set).sort();
-  }, [list]);
-
-  const operadores = React.useMemo(() => {
-    const set = new Set<string>();
-    list.forEach((e) => {
-      const o = e.operadorId?.trim();
-      if (o) set.add(o);
-    });
-    return Array.from(set).sort();
-  }, [list]);
+  const [search, setSearch] = React.useState("");
+  const [filterColor, setFilterColor] = React.useState<"todos" | "rojo" | "amarillo" | "verde">("todos");
+  const [detail, setDetail] = React.useState<AtencionFromApi | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = React.useState<AtencionFromApi | null>(null);
+  const [exporting, setExporting] = React.useState(false);
+  const [pdfLoading, setPdfLoading] = React.useState<string | null>(null);
 
   const filtrados = React.useMemo(() => {
-    let result = list;
-    if (filterUnidad) {
-      result = result.filter((e) => (e.unidadId ?? "").trim() === filterUnidad);
+    let list = atenciones;
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (a) =>
+          (a.nombrePaciente ?? "").toLowerCase().includes(q) ||
+          (a.pacienteId ?? "").toLowerCase().includes(q) ||
+          (a.data?.dni ?? "").toLowerCase().includes(q)
+      );
     }
-    if (filterOperador) {
-      result = result.filter((e) => (e.operadorId ?? "").trim() === filterOperador);
+    if (filterColor !== "todos") {
+      list = list.filter((a) => {
+        const n = getNivelGravedad(a);
+        if (filterColor === "rojo") return n === 4 || n === 5;
+        if (filterColor === "amarillo") return n === 2 || n === 3;
+        return n === 1;
+      });
     }
-    return result;
-  }, [list, filterUnidad, filterOperador]);
+    return list;
+  }, [atenciones, search, filterColor]);
+
+  const hoy = React.useMemo(() => atenciones.filter((a) => isHoy(a.createdAt)), [atenciones]);
+  const rojosHoy = hoy.filter((a) => {
+    const n = getNivelGravedad(a);
+    return n === 4 || n === 5;
+  });
+  const pctRojos = hoy.length > 0 ? Math.round((rojosHoy.length / hoy.length) * 100) : 0;
+  const duraciones = hoy
+    .map((a) => duracionMinutos(a.createdAt, a.data?.hora_inicio_atencion))
+    .filter((m): m is number => m != null && m >= 0);
+  const promedioMin = duraciones.length > 0 ? Math.round(duraciones.reduce((s, x) => s + x, 0) / duraciones.length) : null;
+  const operadoresHoy = React.useMemo(() => {
+    const set = new Set<string>();
+    hoy.forEach((a) => {
+      const o = (a.operadorId ?? "").trim();
+      if (o) set.add(o);
+    });
+    return set.size;
+  }, [hoy]);
+
+  const handleDelete = React.useCallback(async () => {
+    if (!deleteConfirm) return;
+    const id = deleteConfirm.atencionId;
+    setDeleteConfirm(null);
+    const ok = await deleteAtencionApi(id);
+    if (ok.ok) void mutate();
+  }, [deleteConfirm, mutate]);
+
+  const handleExportCSV = React.useCallback(() => {
+    setExporting(true);
+    exportToCSV(atenciones);
+    setExporting(false);
+  }, [atenciones]);
+
+  const handleDownloadPDF = React.useCallback(
+    async (a: AtencionFromApi) => {
+      setPdfLoading(a.id);
+      try {
+        const data: ReportSummaryData = {
+          ...a.data,
+          nombre_paciente: a.nombrePaciente,
+          paciente_id: a.pacienteId,
+          sintomas_texto: a.sintomas_texto ?? a.data?.sintomas_texto,
+          diagnostico: a.data?.diagnostico ?? undefined,
+        };
+        await generateAndDownloadPDF(data);
+      } catch (e) {
+        console.warn("[Manager] PDF:", e);
+      } finally {
+        setPdfLoading(null);
+      }
+    },
+    []
+  );
 
   return (
     <>
-      <h2 className="mb-2 text-xl font-bold text-white lg:text-2xl">Monitor en Vivo</h2>
-      <p className="mb-6 text-sm text-slate-400">Monitorización en tiempo real · Unidades activas y mensajería</p>
+      <h2 className="mb-1 text-xl font-bold text-white lg:text-2xl">
+        Panel de Gestión — Atenciones (Neon)
+      </h2>
+      <p className="mb-6 text-sm text-slate-400">
+        Visibilidad total sobre atenciones guardadas · Actualización cada 30 s
+      </p>
 
-      {firebaseError && (
-        <div role="alert" className="mb-4">
-          <p className="rounded-lg border border-red-800 bg-red-900/40 px-3 py-2 text-sm text-red-200">
-            Conexión Firebase: {firebaseError}
-          </p>
+      {error && (
+        <div role="alert" className="mb-4 rounded-xl border border-red-800 bg-red-900/30 px-4 py-3 text-sm text-red-200">
+          Error al cargar atenciones. Revisá la conexión.
         </div>
       )}
 
-      {/* Tarjetas de resumen */}
-      <section className="mb-6 grid gap-4 sm:grid-cols-2">
+      {/* KPIs */}
+      <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div
-          className="rounded-xl border p-5"
-          style={{ backgroundColor: CARD_BG, borderColor: GOLD_DIM }}
+          className="rounded-xl border p-4"
+          style={{ backgroundColor: CARD_BG, borderColor: BORDER }}
         >
-          <h2 className="mb-1 text-sm font-medium uppercase tracking-wide text-slate-400">
-            Reportes en dispositivo
-          </h2>
-          <p className="text-3xl font-bold" style={{ color: GOLD }}>
-            {list.length}
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            Atenciones hoy
           </p>
-          <p className="mt-1 text-sm text-slate-400">guardados en memoria local</p>
+          <p className="mt-1 text-2xl font-bold text-white">{hoy.length}</p>
         </div>
         <div
-          className="rounded-xl border p-5"
-          style={{ backgroundColor: CARD_BG, borderColor: GOLD_DIM }}
+          className="rounded-xl border p-4"
+          style={{ backgroundColor: CARD_BG, borderColor: BORDER }}
         >
-          <h2 className="mb-1 text-sm font-medium uppercase tracking-wide text-slate-400">
-            Unidades activas ahora
-          </h2>
-          <p className="text-3xl font-bold" style={{ color: GOLD }}>
-            {liveEntries.length}
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            % Triajes rojos (hoy)
           </p>
-          <p className="mt-1 text-sm text-slate-400">sincronizando con Firebase</p>
+          <p className="mt-1 text-2xl font-bold" style={{ color: RED_CRITICAL }}>
+            {pctRojos}%
+          </p>
+        </div>
+        <div
+          className="rounded-xl border p-4"
+          style={{ backgroundColor: CARD_BG, borderColor: BORDER }}
+        >
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            Promedio tiempo atención
+          </p>
+          <p className="mt-1 text-2xl font-bold text-white">
+            {promedioMin != null ? `${promedioMin} min` : "—"}
+          </p>
+        </div>
+        <div
+          className="rounded-xl border p-4"
+          style={{ backgroundColor: CARD_BG, borderColor: BORDER }}
+        >
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            Operadores activos (hoy)
+          </p>
+          <p className="mt-1 text-2xl font-bold" style={{ color: GOLD }}>
+            {operadoresHoy}
+          </p>
         </div>
       </section>
 
-      {/* Panel expandido Web: 60% mapa + 40% alertas/cuadrillas */}
-      <div className="mb-8 grid gap-6 lg:grid-cols-5 lg:min-h-[70vh]">
-        {/* Mapa: 60% en escritorio */}
-        <div className="lg:col-span-3 flex flex-col min-h-[320px] lg:min-h-full">
-          <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-slate-400">
-            Ubicación en tiempo real
-          </h2>
-          <div className="flex-1 min-h-[320px] lg:min-h-0 rounded-xl border border-amber-500/30 overflow-hidden bg-slate-800/50">
-            {liveEntries.length > 0 ? (
-              <ManagerMap entries={liveEntries} className="h-full min-h-[320px] lg:min-h-[400px]" />
-            ) : (
-              <div className="flex h-full min-h-[320px] items-center justify-center text-slate-400">
-                No hay unidades con ubicación. El mapa se actualizará en tiempo real.
-              </div>
-            )}
-          </div>
+      {/* Filtros + Export CSV */}
+      <section className="mb-4 flex flex-wrap items-center gap-4">
+        <input
+          type="search"
+          placeholder="Buscar por nombre o DNI..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="min-h-[44px] min-w-[220px] flex-1 rounded-xl border-2 bg-slate-800/80 px-4 py-2.5 text-sm text-white placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+          style={{ borderColor: BORDER }}
+          aria-label="Buscar paciente"
+        />
+        <div className="flex flex-wrap gap-2">
+          {(["todos", "rojo", "amarillo", "verde"] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilterColor(key)}
+              className="min-h-[40px] rounded-lg border-2 px-3 py-2 text-xs font-semibold uppercase transition"
+              style={{
+                borderColor: filterColor === key ? (key === "rojo" ? RED_CRITICAL : key === "amarillo" ? AMBER : key === "verde" ? GREEN : GOLD) : BORDER,
+                backgroundColor: filterColor === key ? (key === "rojo" ? "rgba(220,38,38,0.15)" : key === "amarillo" ? "rgba(245,158,11,0.15)" : key === "verde" ? "rgba(22,163,74,0.15)" : "rgba(234,179,8,0.1)") : "transparent",
+                color: filterColor === key ? "white" : SLATE_400,
+              }}
+            >
+              {key === "todos" ? "Todos" : key === "rojo" ? "Rojo" : key === "amarillo" ? "Amarillo" : "Verde"}
+            </button>
+          ))}
         </div>
+        <button
+          type="button"
+          onClick={handleExportCSV}
+          disabled={exporting || atenciones.length === 0}
+          className="min-h-[44px] rounded-xl border-2 px-4 py-2.5 text-sm font-semibold text-white transition disabled:opacity-50"
+          style={{ borderColor: GOLD, backgroundColor: "rgba(234, 179, 8, 0.2)" }}
+        >
+          {exporting ? "Exportando…" : "Exportar CSV global"}
+        </button>
+      </section>
 
-        {/* Lista alertas/cuadrillas: 40% en escritorio */}
-        <div className="lg:col-span-2 flex flex-col min-h-0">
-          <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-slate-400">
-            Unidades activas en la calle
-          </h2>
-          {/* Tabla de intervenciones en tiempo real: triage (color) + CIE-11 */}
-          {liveEntries.length > 0 && (
-            <div className="mb-4 overflow-x-auto rounded-xl border border-slate-600/50" style={{ backgroundColor: CARD_BG }}>
-              <table className="w-full border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-slate-600/70">
-                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Unidad</th>
-                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Paciente</th>
-                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Paso</th>
-                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Nivel</th>
-                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">CIE-11</th>
-                    <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wide text-slate-400">Diagnóstico</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {liveEntries.map((entry) => {
-                    const stepLabel = STEP_LABELS[entry.currentStep ?? 0] ?? `Paso ${entry.currentStep}`;
-                    const isCritical = entry.hasRCP === true;
-                    const diag = entry.diagnostico_presuntivo;
-                    const nivelLabel = isCritical ? "RCP" : "En curso";
-                    const nivelColor = isCritical ? RED_CRITICAL : GOLD;
-                    const nivelStyle = {
-                      backgroundColor: isCritical ? "rgba(220, 38, 38, 0.25)" : GOLD_DIM,
-                      color: nivelColor,
-                    };
-                    return (
-                      <tr key={entry.key} className="border-b border-slate-600/50 hover:bg-slate-700/30 transition-colors">
-                        <td className="px-3 py-2 font-mono text-slate-200">{entry.unidadId || entry.operadorId || "—"}</td>
-                        <td className="px-3 py-2 text-slate-200">{entry.nombre_paciente || entry.paciente_id || "—"}</td>
-                        <td className="px-3 py-2 text-slate-300">{stepLabel}</td>
-                        <td className="px-3 py-2">
-                          <span className="inline-flex rounded px-2 py-0.5 text-xs font-bold uppercase" style={nivelStyle}>
-                            {nivelLabel}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 font-mono text-amber-400">{diag?.codigo_cie ?? "—"}</td>
-                        <td className="px-3 py-2 text-slate-300 max-w-[140px] truncate" title={diag?.termino_comun ?? ""}>{diag?.termino_comun ?? "—"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-          <div className="flex-1 overflow-y-auto rounded-xl border border-slate-600/50 space-y-3 pr-1" style={{ backgroundColor: CARD_BG }}>
-            {liveEntries.length === 0 ? (
-              <div className="p-8 text-center">
-                <p className="text-slate-400">
-                  No hay intervenciones activas. Las unidades aparecerán aquí al rellenar el protocolo.
-                </p>
-              </div>
-            ) : (
-              <ul className="space-y-3 p-3">
-              {liveEntries.map((entry) => {
-                const updatedAt = entry.updatedAt
-                  ? new Date(entry.updatedAt).toLocaleTimeString("es-ES", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      second: "2-digit",
-                    })
-                  : "—";
-                const stepLabel = STEP_LABELS[entry.currentStep ?? 0] ?? `Paso ${entry.currentStep}`;
-                const isCritical = entry.hasRCP === true;
-
-                return (
-                  <li
-                    key={entry.key}
-                    className={`rounded-xl border p-4 ${
-                      isCritical ? "animate-critical-blink" : ""
-                    }`}
-                    style={{
-                      backgroundColor: CARD_BG,
-                      borderColor: isCritical
-                        ? "rgba(220, 38, 38, 0.6)"
-                        : "rgba(234, 179, 8, 0.35)",
-                      borderLeftWidth: "4px",
-                      borderLeftColor: isCritical ? RED_CRITICAL : GOLD,
-                    }}
-                  >
-                    <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-                      <span
-                        className="rounded px-2 py-0.5 text-xs font-bold uppercase"
-                        style={{ backgroundColor: GOLD_DIM, color: GOLD }}
-                      >
-                        Operador: {entry.operadorId || "—"}
-                      </span>
-                      <span
-                        className="rounded px-2 py-0.5 text-xs font-bold uppercase"
-                        style={{ backgroundColor: GOLD_DIM, color: GOLD }}
-                      >
-                        Móvil: {entry.unidadId || "—"}
-                      </span>
-                      {isCritical && (
-                        <span
-                          className="rounded px-2 py-0.5 text-xs font-bold uppercase"
-                          style={{ backgroundColor: "rgba(220, 38, 38, 0.3)", color: "#fca5a5" }}
-                        >
-                          RCP
-                        </span>
-                      )}
-                    </div>
-                    <p className="font-semibold text-white">
-                      {entry.nombre_paciente || entry.paciente_id || "Sin paciente"} — Paso:{" "}
-                      {stepLabel}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-400">
-                      Última actualización: {updatedAt}
-                      {entry.hora_inicio_atencion && (
-                        <> · Inicio: {new Date(entry.hora_inicio_atencion).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</>
-                      )}
-                    </p>
-                    {entry.timestamp_eventos && entry.timestamp_eventos.length > 0 && (
-                      <p className="mt-1 text-xs text-slate-500">
-                        Eventos: {entry.timestamp_eventos.map((e) => e.evento).join(", ")}
-                      </p>
-                    )}
-                    {/* Último mensaje y acuse de recibo */}
-                    {liveMensajes[entry.key]?.text && (
-                      <p className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-                        <span className="text-slate-400">
-                          Mensaje: {liveMensajes[entry.key].text}
-                        </span>
-                        {liveMensajes[entry.key].leido ? (
-                          <span className="inline-flex items-center gap-1 rounded bg-emerald-900/50 px-2 py-0.5 font-medium text-emerald-400">
-                            <span aria-hidden>✓</span> Leído
-                          </span>
-                        ) : null}
-                      </p>
-                    )}
-                    {/* Mensajería táctica: botones rápidos + campo libre */}
-                    <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-600/50 pt-3">
-                      {PRESETS.map((preset) => (
-                        <button
-                          key={preset.text}
-                          type="button"
-                          onClick={() => sendMensaje(entry.key, preset.text)}
-                          className="min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
-                          style={{ backgroundColor: preset.color }}
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <input
-                        type="text"
-                        placeholder="Mensaje a la unidad…"
-                        value={mensajeDraft[entry.key] ?? ""}
-                        onChange={(e) =>
-                          setMensajeDraft((prev) => ({ ...prev, [entry.key]: e.target.value }))
-                        }
-                        className="min-h-[40px] flex-1 rounded-lg border-2 bg-slate-800 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-                        style={{ borderColor: "rgba(234, 88, 12, 0.4)", minWidth: "140px" }}
-                        maxLength={200}
-                        aria-label="Mensaje para la unidad"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const text = (mensajeDraft[entry.key] ?? "").trim();
-                          if (text) {
-                            sendMensaje(entry.key, text);
-                            setMensajeDraft((prev) => ({ ...prev, [entry.key]: "" }));
-                          }
-                        }}
-                        className="min-h-[40px] shrink-0 rounded-lg px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
-                        style={{ backgroundColor: ORANGE_WARNING }}
-                      >
-                        Enviar
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-              </ul>
-            )}
+      {/* Tabla táctica */}
+      <section
+        className="overflow-hidden rounded-xl border"
+        style={{ backgroundColor: CARD_BG, borderColor: BORDER }}
+      >
+        {isLoading ? (
+          <div className="flex min-h-[280px] items-center justify-center text-slate-400">
+            Cargando atenciones…
           </div>
+        ) : filtrados.length === 0 ? (
+          <div className="flex min-h-[320px] flex-col items-center justify-center gap-4 p-8 text-center">
+            <div
+              className="flex h-24 w-24 items-center justify-center rounded-full border-2 border-dashed border-slate-600 text-slate-500"
+              aria-hidden
+            >
+              <svg className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+            </div>
+            <p className="max-w-sm text-base font-medium text-slate-300">
+              Esperando reportes de patrullas…
+            </p>
+            <p className="text-sm text-slate-500">
+              {atenciones.length === 0
+                ? "No hay atenciones en Neon. Los reportes aparecerán aquí al finalizar desde la app."
+                : "Ninguna atención coincide con los filtros."}
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b" style={{ borderColor: BORDER }}>
+                  <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-400">Triaje</th>
+                  <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-400">Paciente / DNI</th>
+                  <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-400">Fecha / Hora</th>
+                  <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-400">Operador · Móvil</th>
+                  <th className="px-4 py-3 text-left font-semibold uppercase tracking-wide text-slate-400">Diagnóstico</th>
+                  <th className="px-4 py-3 text-right font-semibold uppercase tracking-wide text-slate-400">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtrados.map((a) => {
+                  const nivel = getNivelGravedad(a);
+                  const style = triajeColor(nivel);
+                  const label = NIVEL_LABELS[nivel];
+                  const diag = a.data?.diagnostico as { termino_comun?: string; codigo_cie?: string } | undefined;
+                  return (
+                    <tr
+                      key={a.atencionId}
+                      className="border-b border-slate-700/50 transition hover:bg-slate-700/20"
+                    >
+                      <td className="px-4 py-3">
+                        <span
+                          className="inline-flex rounded-lg px-2.5 py-1 text-xs font-bold uppercase"
+                          style={{
+                            backgroundColor: style.bg,
+                            color: style.text,
+                            boxShadow: style.glow,
+                          }}
+                        >
+                          {label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-white">{a.nombrePaciente || a.pacienteId || "—"}</p>
+                        <p className="text-xs text-slate-500">{a.data?.dni ?? a.pacienteId ?? ""}</p>
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">
+                        {new Date(a.createdAt).toLocaleString("es-ES", {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })}
+                      </td>
+                      <td className="px-4 py-3 text-slate-300">
+                        {a.operadorId ?? "—"} {a.unidadId ? `· ${a.unidadId}` : ""}
+                      </td>
+                      <td className="max-w-[180px] truncate px-4 py-3 text-slate-400" title={diag?.termino_comun ?? ""}>
+                        {diag?.termino_comun ?? a.diagnostico_codigo ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex flex-wrap justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setDetail(a)}
+                            className="min-h-[36px] rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-700"
+                          >
+                            Ver detalle
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadPDF(a)}
+                            disabled={pdfLoading === a.id}
+                            className="min-h-[36px] rounded-lg border border-amber-600/50 bg-amber-900/30 px-3 py-1.5 text-xs font-medium text-amber-200 transition hover:bg-amber-800/50 disabled:opacity-60"
+                          >
+                            {pdfLoading === a.id ? "…" : "PDF"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirm(a)}
+                            className="min-h-[36px] rounded-lg border border-red-800/50 bg-red-900/30 px-3 py-1.5 text-xs font-medium text-red-200 transition hover:bg-red-800/50"
+                          >
+                            Eliminar
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* Modal detalle */}
+      <Dialog open={!!detail} onOpenChange={(open) => !open && setDetail(null)}>
+        <DialogContent
+          className="max-h-[90vh] max-w-2xl overflow-hidden border-slate-700 bg-slate-900 text-slate-100"
+          style={{ backgroundColor: CARD_BG }}
+        >
+          {detail && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-lg text-white">
+                  {detail.nombrePaciente || detail.pacienteId || "Atención"} — {new Date(detail.createdAt).toLocaleString("es-ES")}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="max-h-[60vh] overflow-y-auto space-y-4 pr-2">
+                <DetalleData data={detail.data} sintomasText={detail.sintomas_texto} />
+              </div>
+              <DialogFooter className="border-t border-slate-700 pt-4">
+                <button
+                  type="button"
+                  onClick={() => { handleDownloadPDF(detail); setDetail(null); }}
+                  className="min-h-[40px] rounded-lg border border-amber-600/50 bg-amber-900/30 px-4 py-2 text-sm font-medium text-amber-200 hover:bg-amber-800/50"
+                >
+                  Descargar PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetail(null)}
+                  className="min-h-[40px] rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
+                >
+                  Cerrar
+                </button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirmación eliminar */}
+      <Dialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
+        <DialogContent className="border-slate-700 bg-slate-900 text-slate-100" style={{ backgroundColor: CARD_BG }}>
+          <DialogHeader>
+            <DialogTitle className="text-white">¿Eliminar esta atención?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-slate-400">
+            Se borrará de Neon de forma permanente. Esta acción no se puede deshacer.
+          </p>
+          <DialogFooter className="gap-2 pt-4">
+            <button
+              type="button"
+              onClick={() => setDeleteConfirm(null)}
+              className="min-h-[40px] rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              className="min-h-[40px] rounded-lg border border-red-600 bg-red-900/80 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-800"
+            >
+              Eliminar
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function DetalleData({
+  data,
+  sintomasText,
+}: {
+  data: AtencionFromApi["data"];
+  sintomasText?: string;
+}): React.ReactElement {
+  const d = data ?? {};
+  const sv = d.signos_vitales ?? {};
+  const diag = d.diagnostico as { termino_comun?: string; codigo_cie?: string; descripcion_tecnica?: string } | undefined;
+
+  return (
+    <div className="space-y-4">
+      {/* Signos vitales en rejilla */}
+      <div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Signos vitales
+        </h3>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <Kv label="TA" value={sv.tensionArterial ?? (d.bp_systolic != null && d.bp_diastolic != null ? `${d.bp_systolic}/${d.bp_diastolic}` : "—")} />
+          <Kv label="Pulso (lpm)" value={d.pulse ?? sv.frecuenciaCardiaca ?? "—"} />
+          <Kv label="SpO₂" value={sv.saturacionOxigeno ?? "—"} />
+          <Kv label="FR" value={d.respiration_rate ?? sv.frecuenciaRespiratoria ?? "—"} />
+          <Kv label="Glasgow" value={d.glasgow_score ?? d.glasgow?.puntaje_glasgow ?? "—"} />
+          <Kv label="Pérdida sangre" value={d.blood_loss ?? "—"} />
+          <Kv label="Vía aérea" value={d.airway_status ?? "—"} />
         </div>
       </div>
 
-      {/* Filtros y historial local */}
-        <section className="mb-6 flex flex-wrap gap-4">
-          <div className="min-w-[180px] flex-1">
-            <label htmlFor="filter-unidad" className="mb-1 block text-xs font-medium text-slate-400">
-              Filtrar por Unidad
-            </label>
-            <select
-              id="filter-unidad"
-              value={filterUnidad}
-              onChange={(e) => setFilterUnidad(e.target.value)}
-              className="w-full rounded-xl border-2 border-slate-600 bg-slate-800 px-4 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-            >
-              <option value="">Todas las unidades</option>
-              {unidades.map((u) => (
-                <option key={u} value={u}>
-                  {u}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="min-w-[180px] flex-1">
-            <label htmlFor="filter-operador" className="mb-1 block text-xs font-medium text-slate-400">
-              Filtrar por Paramédico
-            </label>
-            <select
-              id="filter-operador"
-              value={filterOperador}
-              onChange={(e) => setFilterOperador(e.target.value)}
-              className="w-full rounded-xl border-2 border-slate-600 bg-slate-800 px-4 py-2.5 text-sm text-white focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/50"
-            >
-              <option value="">Todos los operadores</option>
-              {operadores.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </select>
-          </div>
-        </section>
+      {/* Síntomas destacados */}
+      <div>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Motivo / Observaciones
+        </h3>
+        <p className="rounded-lg border border-slate-600 bg-slate-800/60 px-3 py-2 text-sm text-slate-200">
+          {(sintomasText ?? d.sintomas_texto ?? "").trim() || "—"}
+        </p>
+      </div>
 
-        <section>
-          <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-slate-400">
-            Historial local (reportes guardados)
-          </h2>
-          {filtrados.length === 0 ? (
-            <div
-              className="rounded-xl border border-slate-600/50 p-8 text-center"
-              style={{ backgroundColor: CARD_BG }}
-            >
-              <p className="text-slate-400">
-                {list.length === 0
-                  ? "No hay reportes en la memoria local."
-                  : "Ningún reporte coincide con los filtros."}
-              </p>
-            </div>
-          ) : (
-            <ul className="space-y-3">
-              {filtrados.map((entry) => {
-                const date = new Date(entry.createdAt);
-                const fechaHora = date.toLocaleString("es-ES", {
-                  dateStyle: "short",
-                  timeStyle: "short",
-                });
-                const paciente = entry.nombrePaciente || entry.pacienteId || "Sin nombre";
+      {/* Diagnóstico */}
+      {diag && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Diagnóstico presuntivo (CIE-11)
+          </h3>
+          <div className="rounded-lg border border-slate-600 bg-slate-800/60 p-3 space-y-1">
+            <p className="font-medium text-amber-200">{diag.termino_comun}</p>
+            <p className="text-xs text-slate-400">Código: {diag.codigo_cie}</p>
+            {diag.descripcion_tecnica && (
+              <p className="text-xs text-slate-500">{diag.descripcion_tecnica}</p>
+            )}
+          </div>
+        </div>
+      )}
 
-                return (
-                  <li
-                    key={entry.id}
-                    className="rounded-xl border p-4"
-                    style={{
-                      backgroundColor: CARD_BG,
-                      borderColor: "rgba(234, 179, 8, 0.35)",
-                    }}
-                  >
-                    <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-                      <span
-                        className="rounded px-2 py-0.5 text-xs font-bold uppercase"
-                        style={{ backgroundColor: GOLD_DIM, color: GOLD }}
-                      >
-                        Operador: {entry.operadorId || "—"}
-                      </span>
-                      <span
-                        className="rounded px-2 py-0.5 text-xs font-bold uppercase"
-                        style={{ backgroundColor: GOLD_DIM, color: GOLD }}
-                      >
-                        Móvil: {entry.unidadId || "—"}
-                      </span>
-                    </div>
-                    <p className="font-semibold text-white">
-                      {fechaHora} — {paciente}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-400">
-                      ID paciente: {entry.pacienteId || "—"}
-                      {entry.data.sintomas_texto && (
-                        <>
-                          {" "}
-                          · {String(entry.data.sintomas_texto).slice(0, 60)}
-                          {String(entry.data.sintomas_texto).length > 60 ? "…" : ""}
-                        </>
-                      )}
-                    </p>
-                    {entry.data.glasgow_score != null && (
-                      <p className="mt-1 text-xs text-slate-500">
-                        Glasgow: {entry.data.glasgow_score}
-                      </p>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-    </>
+      {/* XABCDE resumido */}
+      {d.xabcde && Object.keys(d.xabcde).length > 0 && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            XABCDE
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {["X", "A", "B", "C", "D", "E"].map((letra) => (
+              <span
+                key={letra}
+                className="rounded bg-slate-700/80 px-2 py-1 text-xs font-mono text-slate-300"
+              >
+                {letra}: {(d.xabcde as Record<string, string>)[letra] ?? "—"}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Timestamps */}
+      {d.timestamp_eventos && d.timestamp_eventos.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Eventos
+          </h3>
+          <ul className="space-y-1 rounded-lg border border-slate-600 bg-slate-800/60 p-3 text-xs text-slate-300">
+            {d.timestamp_eventos.map((ev, i) => (
+              <li key={i}>
+                {new Date(ev.hora).toLocaleTimeString("es-ES")} — {ev.evento}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Hora inicio */}
+      {d.hora_inicio_atencion && (
+        <p className="text-xs text-slate-500">
+          Inicio atención: {new Date(d.hora_inicio_atencion).toLocaleString("es-ES")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Kv({ label, value }: { label: string; value: React.ReactNode }): React.ReactElement {
+  return (
+    <div className="rounded border border-slate-600 bg-slate-800/50 px-2 py-1.5">
+      <span className="text-[10px] uppercase text-slate-500">{label}</span>
+      <p className="text-sm font-medium text-slate-200">{value ?? "—"}</p>
+    </div>
   );
 }

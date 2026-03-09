@@ -12,7 +12,7 @@ const GOLD = "#eab308";
 const BORDER_SUBTLE = "rgba(51, 65, 85, 0.6)";
 
 const TABS = [
-  { href: "/manager", label: "Monitor en Vivo" },
+  { href: "/manager", label: "Atenciones" },
   { href: "/manager/doctor", label: "Doctor" },
   { href: "/manager/estadisticas", label: "Estadísticas" },
   { href: "/manager/personal", label: "Personal" },

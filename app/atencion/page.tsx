@@ -360,7 +360,7 @@ function AtencionContent(): React.ReactElement | null {
             }}
           />
         ) : (
-          <div className="relative">
+          <div className="relative min-h-[calc(100dvh-8rem)] min-h-[calc(100vh-8rem)]">
             {isSubmitting && (
               <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border backdrop-blur-sm" style={{ borderColor: "rgba(37, 99, 235, 0.3)", backgroundColor: "rgba(15, 23, 42, 0.95)" }} aria-live="polite">
                 <SpinnerMedico label="Enviando reporte a central…" />

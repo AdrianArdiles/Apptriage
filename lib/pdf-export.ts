@@ -189,12 +189,6 @@ function normalizeReportData(data: ReportSummaryData): ReportSummaryData {
  */
 export function exportToPDF(data: ReportSummaryData, options?: PDFExportOptions): jsPDF {
   const normalized = normalizeReportData(data);
-  console.log("[PDF Export] Datos normalizados para el informe:", {
-    nombre_paciente: normalized.nombre_paciente,
-    paciente_id: normalized.paciente_id,
-    xabcde: normalized.xabcde,
-    diagnostico: normalized.diagnostico ? "presente" : "ausente",
-  });
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const esNivelRojo = normalized.nivel_gravedad === 5;
   if (esNivelRojo) drawBandaRoja(doc);

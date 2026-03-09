@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { ToastTimestamp } from "@/components/toast-timestamp";
 
 const BG_DARK = "#0f172a";
 const RED_EMERGENCY = "#dc2626";
@@ -83,6 +84,7 @@ function LandingPage(): React.ReactElement {
   const [modalGestionOpen, setModalGestionOpen] = React.useState(false);
   const [pinGestion, setPinGestion] = React.useState("");
   const [pinError, setPinError] = React.useState(false);
+  const [toastMessage, setToastMessage] = React.useState<string | null>(null);
 
   const accesoDenegado = searchParams.get("acceso") === "denegado";
 
@@ -146,7 +148,7 @@ function LandingPage(): React.ReactElement {
       if (code === "auth/email-already-in-use") {
         setRegistroMode(false);
         setLoginError("Ya tenés una cuenta. Iniciá sesión con tu correo y contraseña.");
-        if (typeof alert === "function") alert("Este correo ya está registrado, por favor inicia sesión.");
+        setToastMessage("Este correo ya está registrado. Iniciá sesión con tu correo y contraseña.");
       } else if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
         const hint = "Si este correo lo usaste con Google, entrá con «Continuar con Google». Si no tenés cuenta, creá una con «Registrarse».";
         setLoginError(`${msg} ${hint}`);
@@ -200,14 +202,15 @@ function LandingPage(): React.ReactElement {
     );
   }
 
-  // No autorizado o error al verificar: mensaje claro y botón
+  // No autorizado o error al verificar: mensaje claro y botón (visible en móvil)
   if (isUnauthorized && user) {
+    const errorText = contextAuthError || "Su correo no está en la lista de usuarios autorizados o hubo un error de conexión. Comprobá que la app esté en los dominios autorizados de Firebase (Authentication → Configuración).";
     return (
       <div className="flex min-h-screen flex-col items-center justify-center px-6 font-sans text-slate-100" style={{ backgroundColor: BG_DARK }}>
         <div className="flex max-w-md flex-col items-center rounded-2xl border border-red-500/40 bg-slate-800/50 p-8 shadow-xl">
-          <h1 className="mb-2 text-center text-xl font-bold text-red-200">No se pudo completar el acceso</h1>
-          <p className="mb-6 text-center text-sm text-slate-400">
-            {contextAuthError || "Su correo no está en la lista de usuarios autorizados o hubo un error de conexión. Comprobá que la app esté en los dominios autorizados de Firebase (Authentication → Configuración)."}
+          <h1 className="mb-3 text-center text-xl font-bold text-red-200">No se pudo completar el acceso</h1>
+          <p className="mb-6 min-h-[3.5rem] text-center text-sm leading-relaxed text-slate-300" style={{ color: "#cbd5e1" }}>
+            {errorText}
           </p>
           <button
             type="button"
@@ -357,6 +360,7 @@ function LandingPage(): React.ReactElement {
         <footer className="border-t border-slate-800 px-4 py-5 text-center" style={{ borderColor: "rgba(51, 65, 85, 0.6)" }}>
           <p className="text-xs text-slate-500">Sistema de Gestión de Emergencias V1.0</p>
         </footer>
+        <ToastTimestamp message={toastMessage} onDismiss={() => setToastMessage(null)} />
         <Dialog open={modalGestionOpen} onOpenChange={setModalGestionOpen}>
           <DialogContent className="border-slate-700 bg-slate-900 text-slate-100" style={{ backgroundColor: "#1e293b" }}>
             <DialogHeader>

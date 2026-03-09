@@ -43,3 +43,28 @@ La API en `/api/triage` ya envía `Access-Control-Allow-Origin: *` en todas las 
 - En los logs de Vercel revisa **"=== TEXTO RECIBIDO ==="** para ver el body que llega.
 - En la app, el mensaje de error muestra **"Recibido:"** con el objeto que devolvió el servidor.
 - Asegúrate de haber ejecutado **build:android:clean**, desinstalado la app e instalado la nueva APK.
+
+## "Unable to resolve host" / Firebase Auth no conecta (logcat)
+
+Si en logcat ves:
+
+```text
+Unable to resolve host "identitytoolkit.googleapis.com": No address associated with hostname
+UnknownHostException
+```
+
+**No es un fallo de la app ni de la base de datos**: el dispositivo o emulador **no tiene internet o DNS no resuelve**. Firebase Auth (email/contraseña y parte de Google) usa ese dominio; si no se resuelve, login falla.
+
+**Qué hacer:**
+
+1. **Emulador Android**
+   - Comprobar que el emulador tenga red: abrir el navegador en el AVD y cargar https://google.com. Si no carga, el emulador no tiene internet.
+   - **Cold boot**: AVD Manager → ⋮ del emulador → **Cold Boot Now**.
+   - Probar **DNS en el emulador**: en el AVD, ajustes de red/WiFi (si se pueden configurar) o en el host asegurar que DNS funcione (ej. 8.8.8.8).
+   - Crear un AVD nuevo (a veces el que tienes tiene la red rota).
+
+2. **Dispositivo físico**
+   - Comprobar **WiFi o datos móviles** activos y que otras apps tengan internet.
+   - Si usas VPN o proxy, probar sin ellos.
+
+3. **Probar en dispositivo real con WiFi** suele ser la forma más fiable de descartar problemas del emulador.

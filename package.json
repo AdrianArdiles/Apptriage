@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "app:build": "next build && npx cap sync",
-    "build:android": "node scripts/hide-api-for-export.js && npm run build && node scripts/restore-api-after-export.js && npx cap copy android && npx cap sync android",
+    "build:android": "npm run build && npx cap copy android && npx cap sync android",
     "build:android:clean": "node -e \"require('fs').rmSync('out',{recursive:true,force:true}); require('fs').rmSync('.next',{recursive:true,force:true});\" && npm run build:android",
     "prebuild:capacitor": "node scripts/prebuild-capacitor.js",
     "postbuild:capacitor": "node scripts/postbuild-capacitor.js",
@@ -12,7 +12,7 @@
     "build:mobile": "npm run build && npx cap copy android && npx cap sync android",
     "dev": "next dev",
     "dev:network": "next dev --hostname 0.0.0.0",
-    "build": "prisma generate && next build",
+    "build": "node scripts/run-build.js",
     "build:web": "cross-env BUILD_WEB=1 prisma generate && next build",
     "build:hosting": "prisma generate && next build",
     "deploy:hosting": "npm run build:hosting && firebase deploy --only hosting",
@@ -34,6 +34,7 @@
     "@capacitor/haptics": "^8.0.1",
     "@capacitor/share": "^8.0.1",
     "@codetrix-studio/capacitor-google-auth": "^3.4.0-rc.4",
+    "@neondatabase/serverless": "^1.0.2",
     "@prisma/client": "^5.0.0",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-label": "^2.1.0",
@@ -52,6 +53,7 @@
     "react-dom": "^19.0.0",
     "react-leaflet": "^5.0.0",
     "recharts": "^3.7.0",
+    "swr": "^2.4.1",
     "tailwind-merge": "^2.5.0"
   },
   "devDependencies": {

@@ -20,15 +20,14 @@ import {
   type TimestampEvento,
 } from "@/lib/ficha-clinica-storage";
 import { DiagnosticoAutocomplete } from "@/components/diagnostico-autocomplete";
-import { generateAndSharePDFSafe, generateAndDownloadPDF, canUseShare } from "@/lib/share-pdf";
+import { generateAndSharePDFSafe, generateAndDownloadPDF, canUseShare, PDF_ERROR_MENSAJE_DATOS_GUARDADOS } from "@/lib/share-pdf";
 import type { ReportSummaryData } from "@/lib/report-summary";
 import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
-import { getAuthInstance, getFirestoreInstance } from "@/lib/firebase";
-import { pushAtencionToFirebase } from "@/lib/firebase-atenciones";
-import { pushAtencionToFirestore } from "@/lib/firestore-atenciones";
+import { getAuthInstance } from "@/lib/firebase";
 import { sanitizeFirestoreData } from "@/lib/clean-object";
 import { getOperadorId, getUnidadId, getAtendidoPor } from "@/lib/operador-storage";
 import { syncIntervencionToFirebase, removeIntervencionFromFirebase } from "@/lib/firebase-intervenciones";
+import { postAtencion } from "@/lib/api";
 import { hapticImpactMedium } from "@/lib/haptics";
 import { ToastTimestamp } from "@/components/toast-timestamp";
 
@@ -160,6 +159,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
   const [lastAddedHora, setLastAddedHora] = React.useState<string | null>(null);
 
   const persistRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timestampInputRef = React.useRef<HTMLInputElement>(null);
 
   const TOTAL_STEPS = 12;
 
@@ -384,13 +384,16 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
     return timestampEventos.filter((ev) => ev.evento === label).length;
   }, [timestampEventos]);
 
-  /** Botones rápidos de tiempos: etiqueta y clase de color (min 44px). */
-  const BOTONES_TIMESTAMP = [
+  /** Botonera táctica: eventos intermedios (un toque = registro con timestamp). Llegada Hosp. va solo al final del flujo. */
+  const BOTONES_QUICK_GRID = [
     { label: "Salida/Llegada Escena", color: "bg-emerald-600 hover:bg-emerald-500 border-emerald-500 text-white" },
     { label: "Adrenalina", color: "bg-red-600 hover:bg-red-500 border-red-500 text-white" },
     { label: "Descarga DEA", color: "bg-blue-600 hover:bg-blue-500 border-blue-500 text-white" },
-    { label: "Llegada Hosp.", color: "bg-amber-500 hover:bg-amber-400 border-amber-400 text-zinc-900" },
+    { label: "Oxígeno", color: "bg-cyan-600 hover:bg-cyan-500 border-cyan-500 text-white" },
+    { label: "Medicación", color: "bg-violet-600 hover:bg-violet-500 border-violet-500 text-white" },
+    { label: "Otro", color: "bg-slate-600 hover:bg-slate-500 border-slate-500 text-white" },
   ] as const;
+  const EVENTO_CIERRE = "Llegada al Hospital";
 
   const glasgowCompleto = glasgowE > 0 && glasgowV > 0 && glasgowM > 0;
 
@@ -472,10 +475,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
     return `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
   }, []);
 
-  /** Timeout para no quedar colgado en "Enviando..." si Firestore no responde. */
-  const FIRESTORE_TIMEOUT_MS = 22000;
-
-  /** Flujo FINALIZAR ATENCIÓN: A) cleanData B) addDoc con timeout C) PDF D) Si falla → alert. */
+  /** Flujo FINALIZAR ATENCIÓN: solo API Vercel → si OK, PDF → reset y redirección al Panel de Gestión. */
   const handleFinalizarAtencion = async () => {
     setSyncError(false);
     setFinalizando(true);
@@ -485,14 +485,6 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
       setFinalizando(false);
       setToastMessage("Debe iniciar sesión de nuevo para guardar.");
       if (typeof alert === "function") alert("Sesión expirada. Debe re-autenticarse para guardar.");
-      return;
-    }
-    const fs = getFirestoreInstance();
-    if (!fs) {
-      setFinalizando(false);
-      setSyncError(true);
-      setToastMessage("Firestore no disponible. Revisá la conexión.");
-      if (typeof alert === "function") alert("No se pudo conectar con la base de datos. Revisá tu conexión e intentá de nuevo.");
       return;
     }
     const operadorId = getOperadorId() || "";
@@ -512,46 +504,42 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
       diagnostico_codigo: diagnosticoPresuntivo?.codigo_cie,
     };
     const paramedicoNombre = getAtendidoPor() || operadorId || "Paramédico";
-
+    const paramedicoEmail = (userEmail ?? "").trim() || undefined;
     const cleanData = sanitizeFirestoreData(entry);
-    const savePromise = pushAtencionToFirestore(cleanData as typeof entry, {
-      paramedicoNombre,
-      paramedicoEmail: (userEmail ?? "").trim() || undefined,
-    });
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("TIMEOUT")), FIRESTORE_TIMEOUT_MS)
-    );
+    const apiPayload = { ...(cleanData as Record<string, unknown>), paramedicoNombre, paramedicoEmail };
+
+    let apiResult: { status: number; data: { id?: string; report_id?: string | null; error?: string } };
     try {
-      await Promise.race([savePromise, timeoutPromise]);
+      apiResult = await postAtencion(apiPayload);
     } catch (e) {
       setFinalizando(false);
       setSyncError(true);
-      const msg = e instanceof Error ? e.message : String(e);
-      const isTimeout = msg === "TIMEOUT";
-      const code = !isTimeout && e && typeof e === "object" && "code" in e ? String((e as { code: string }).code) : "";
-      const fullMsg = !isTimeout && e && typeof e === "object" && "message" in e ? String((e as { message: string }).message) : msg;
-      const userMsg = isTimeout
-        ? "La conexión tardó demasiado. Revisá la red (Wi‑Fi o datos) e intentá de nuevo."
-        : code === "permission-denied"
-          ? "Permisos denegados. Revisá las reglas de Firestore."
-          : code === "invalid-argument" || code === "invalid-argument-error"
-            ? "Datos inválidos. Revisá que no haya campos vacíos o mal formados."
-            : fullMsg;
-      setToastMessage("Error de Firebase: " + userMsg);
-      if (typeof alert === "function") alert("Error de Firebase: " + userMsg);
+      const isTimeout = e instanceof Error && e.message === "TIMEOUT";
+      const isNetwork = e instanceof TypeError && (e.message === "Failed to fetch" || e.message?.includes("fetch"));
+      const msg =
+        isTimeout || isNetwork
+          ? "Error de conexión. Revisá tu internet y volvé a intentarlo."
+          : e instanceof Error
+            ? e.message
+            : "Error de conexión. Revisá tu internet y volvé a intentarlo.";
+      setToastMessage(msg);
+      if (typeof alert === "function") alert(msg);
       return;
     }
 
-    try {
-      await pushAtencionToFirebase(
-        cleanData as typeof entry,
-        diagnosticoPresuntivo
-          ? { nombre: diagnosticoPresuntivo.termino_comun, cie11: diagnosticoPresuntivo.codigo_cie }
-          : undefined
-      );
-    } catch {
-      // Realtime DB opcional; atenciones ya está en Firestore
+    const saved = apiResult.status >= 200 && apiResult.status < 300;
+    if (!saved) {
+      setFinalizando(false);
+      setSyncError(true);
+      const errMsg =
+        typeof apiResult.data === "object" && apiResult.data !== null && "error" in apiResult.data
+          ? String((apiResult.data as { error: unknown }).error)
+          : "No se pudo guardar. Revisá la conexión e intentá de nuevo.";
+      setToastMessage(errMsg);
+      if (typeof alert === "function") alert(errMsg);
+      return;
     }
+
     removeIntervencionFromFirebase(unidadId || operadorId);
     setLastData(data);
 
@@ -569,21 +557,25 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
           setToastMessage("Atención guardada. PDF generado.");
         }
       } else {
-        const result = await generateAndDownloadPDF(data);
-        addToHistorialPdf(data, { operadorId: operadorId || undefined, unidadId: unidadId || undefined, id: result.reportId });
-        setToastMessage("Atención guardada. PDF descargado.");
+        try {
+          const result = await generateAndDownloadPDF(data);
+          addToHistorialPdf(data, { operadorId: operadorId || undefined, unidadId: unidadId || undefined, id: result.reportId });
+          setToastMessage("Atención guardada. PDF descargado.");
+        } catch {
+          setToastMessage(PDF_ERROR_MENSAJE_DATOS_GUARDADOS);
+        }
       }
-      if (typeof alert === "function") alert("Atención finalizada correctamente.");
-      // Paso D: redirigir al Panel de Gestión si el padre lo definió; si no, nueva atención
-      if (onFinalizarSuccess) onFinalizarSuccess();
-      else handleNuevaAtencionClick();
-    } catch (pdfErr) {
-      setToastMessage("Guardado OK. Error al generar PDF: " + (pdfErr instanceof Error ? pdfErr.message : String(pdfErr)));
-      if (typeof alert === "function") alert("Atención guardada en la base de datos. No se pudo generar el PDF.");
-      if (onFinalizarSuccess) onFinalizarSuccess();
-      else handleNuevaAtencionClick();
+    } catch {
+      setToastMessage(PDF_ERROR_MENSAJE_DATOS_GUARDADOS);
     } finally {
+      // Garantizar que la UI no quede bloqueada y la app quede lista para el siguiente paciente.
       setFinalizando(false);
+      resetForm();
+      if (onFinalizarSuccess) {
+        setTimeout(() => onFinalizarSuccess(), 0);
+      } else {
+        setTimeout(() => handleNuevaAtencionClick(), 0);
+      }
     }
   };
 
@@ -705,29 +697,35 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
             </CardContent>
           </Card>
         );
-      case 9:
+      case 9: {
+        const eventosRecientes = timestampEventos.slice(-8).reverse();
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
-            <CardHeader className="p-2 pb-0">
-              <CardTitle className="text-sm text-slate-100">Tiempos</CardTitle>
-              <p className="text-[10px] text-slate-400">Hora exacta de cada evento</p>
+            <CardHeader className="p-2 pb-1">
+              <CardTitle className="text-sm text-slate-100">Panel de Eventos · Acciones</CardTitle>
+              <p className="text-[10px] text-slate-400">Un toque = registro con hora actual. Sin scroll.</p>
             </CardHeader>
-            <CardContent className="space-y-2 p-2 pt-1">
-              <div className="grid grid-cols-2 gap-2">
-                {BOTONES_TIMESTAMP.map((b) => {
+            <CardContent className="space-y-3 p-2 pt-0">
+              {/* Botonera táctica: grid 3x2, siempre visible */}
+              <div className="grid grid-cols-3 gap-2">
+                {BOTONES_QUICK_GRID.map((b) => {
                   const count = countByEvento(b.label);
                   const isPulsing = pulseButtonKey === b.label;
+                  const isOtro = b.label === "Otro";
                   return (
                     <div key={b.label} className="relative">
-                      {count > 0 && (
-                        <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white">
+                      {!isOtro && count > 0 && (
+                        <span className="absolute -right-0.5 -top-0.5 z-10 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white">
                           {count}
                         </span>
                       )}
                       <button
                         type="button"
-                        onClick={() => agregarTimestamp(b.label)}
-                        className={`relative min-h-[40px] w-full touch-manipulation rounded-lg border-2 px-2 py-1.5 text-xs font-medium transition active:scale-[0.98] ${b.color} ${isPulsing ? "animate-button-flash" : ""}`}
+                        onClick={() => {
+                          if (isOtro) timestampInputRef.current?.focus();
+                          else agregarTimestamp(b.label);
+                        }}
+                        className={`relative min-h-[48px] w-full touch-manipulation rounded-xl border-2 px-2 py-2 text-xs font-semibold transition active:scale-[0.97] ${b.color} ${isPulsing ? "animate-button-flash" : ""}`}
                       >
                         {b.label}
                       </button>
@@ -735,28 +733,49 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
                   );
                 })}
               </div>
-              <div className="flex gap-1.5">
-                <Input value={timestampInput} onChange={(e) => setTimestampInput(e.target.value)} placeholder="Otro evento" className={`flex-1 min-w-0 ${INPUT_DARK}`} />
-                <Button type="button" onClick={() => agregarTimestamp()} className={`min-h-[40px] shrink-0 rounded-lg border-2 border-slate-600 bg-slate-800 text-slate-100 text-xs hover:bg-slate-700 ${pulseButtonKey === "_custom" ? "animate-button-flash" : ""}`}>
-                  Registrar
-                </Button>
-              </div>
+              {/* Timeline compacto: últimos eventos */}
               <div>
-                <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">Historial</p>
-                {timestampEventos.length === 0 ? <p className="rounded bg-slate-800/60 px-2 py-1.5 text-xs text-slate-500">Sin eventos</p> : (
-                  <ul className="max-h-24 space-y-0.5 overflow-y-auto text-xs">
-                    {timestampEventos.map((ev, i) => (
-                      <li key={`${ev.hora}-${i}`} className={`flex items-center gap-1.5 rounded bg-slate-800/60 px-2 py-1 text-slate-200 ${ev.hora === lastAddedHora ? "animate-timestamp-in" : ""}`}>
-                        <span className="font-mono text-slate-400">{new Date(ev.hora).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</span>
-                        <span className="text-slate-400">—</span><span>{ev.evento}</span>
+                <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-slate-400">Registro</p>
+                {eventosRecientes.length === 0 ? (
+                  <p className="rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2 text-xs text-slate-500">Sin eventos aún</p>
+                ) : (
+                  <ul className="max-h-[72px] space-y-0.5 overflow-y-auto rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-2 text-xs">
+                    {eventosRecientes.map((ev, i) => (
+                      <li key={`${ev.hora}-${eventosRecientes.length - 1 - i}`} className={`flex items-center gap-2 font-mono ${ev.hora === lastAddedHora ? "text-amber-300 animate-timestamp-in" : "text-slate-300"}`}>
+                        <span className="shrink-0 text-slate-500">{new Date(ev.hora).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                        <span className="truncate">{ev.evento}</span>
                       </li>
                     ))}
                   </ul>
                 )}
               </div>
+              {/* Otro evento: una línea */}
+              <div className="flex gap-2">
+                <Input
+                  ref={timestampInputRef}
+                  value={timestampInput}
+                  onChange={(e) => setTimestampInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), agregarTimestamp())}
+                  placeholder="Otro evento..."
+                  className={`min-h-[44px] flex-1 shrink-0 ${INPUT_DARK} text-sm`}
+                  aria-label="Registrar otro evento"
+                />
+                <Button type="button" onClick={() => agregarTimestamp()} className={`min-h-[44px] shrink-0 rounded-xl border-2 border-slate-600 bg-slate-800 px-4 text-sm font-semibold text-slate-100 hover:bg-slate-700 ${pulseButtonKey === "_custom" ? "animate-button-flash" : ""}`}>
+                  Registrar
+                </Button>
+              </div>
+              {/* Único botón al final del flujo: cierre */}
+              <button
+                type="button"
+                onClick={() => agregarTimestamp(EVENTO_CIERRE)}
+                className={`min-h-[52px] w-full touch-manipulation rounded-xl border-2 border-amber-500 bg-amber-500/90 px-4 py-3 text-sm font-bold uppercase text-zinc-900 shadow-lg transition active:scale-[0.98] hover:bg-amber-400 ${pulseButtonKey === EVENTO_CIERRE ? "animate-button-flash" : ""}`}
+              >
+                Llegada al Hospital
+              </button>
             </CardContent>
           </Card>
         );
+      }
       case 10:
         return (
           <Card className={CARD_DARK} style={CARD_DARK_STYLE}>
@@ -833,11 +852,18 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
   const fabPulsing = pulseButtonKey === "Registro RCP";
 
   return (
-    <form onSubmit={handleSubmit} className="relative flex min-h-[50vh] flex-col">
+    <form onSubmit={handleSubmit} className="relative flex min-h-[100dvh] min-h-[100vh] flex-col">
       <ToastTimestamp message={toastMessage} onDismiss={() => setToastMessage(null)} />
 
-      {/* FAB: Registro RCP */}
-      <div className="fixed bottom-20 right-3 z-40">
+      {/* FAB RCP: siempre visible, fijo sobre la barra de navegación */}
+      <div
+        className="fixed right-3 z-40 flex h-11 w-11 items-center justify-center rounded-full shadow-lg backdrop-blur-md transition active:scale-95"
+        style={{
+          bottom: "calc(3.5rem + env(safe-area-inset-bottom, 0.5rem))",
+          backgroundColor: "rgba(220, 38, 38, 0.95)",
+          border: "2px solid rgba(255,255,255,0.2)",
+        }}
+      >
         {rcpCount > 0 && (
           <span className="absolute -right-0.5 -top-0.5 z-10 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white" aria-label={`RCP ${rcpCount}`}>
             {rcpCount}
@@ -846,14 +872,14 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
         <button
           type="button"
           onClick={() => agregarTimestamp("Registro RCP")}
-          className={`relative flex h-11 w-11 touch-manipulation items-center justify-center rounded-full bg-red-600 text-[10px] font-bold uppercase text-white shadow-lg transition active:scale-95 hover:bg-red-500 ${fabPulsing ? "animate-button-flash" : ""}`}
+          className={`absolute inset-0 flex items-center justify-center rounded-full text-[10px] font-bold uppercase text-white hover:bg-red-500/90 ${fabPulsing ? "animate-button-flash" : ""}`}
           aria-label="Registrar RCP"
         >
           RCP
         </button>
       </div>
 
-      {/* Barra de progreso compacta */}
+      {/* Barra de progreso compacta (no hace scroll) */}
       <div className="mb-1.5 shrink-0">
         <p className="mb-0.5 text-[10px] font-medium text-slate-400">{progressText}</p>
         <div className="h-1 w-full overflow-hidden rounded-full bg-slate-800">
@@ -861,13 +887,17 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
         </div>
       </div>
 
-      {/* Contenido con padding inferior para no quedar bajo la barra fija */}
-      <div className="min-h-0 flex-1 overflow-auto pb-24">{renderStepContent()}</div>
+      {/* Contenido con scroll; en paso Eventos (9) padding-right para que el FAB RCP no tape la botonera */}
+      <div className={`min-h-0 flex-1 overflow-y-auto pb-28 ${currentStep === 9 ? "pr-14" : ""}`}>{renderStepContent()}</div>
 
-      {/* Barra inferior fija: botón Finalizar siempre accesible sin scroll (fixed bottom-0 w-full) */}
+      {/* Barra inferior FIJA: navegación y Finalizar siempre visibles sin scroll */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-30 flex w-full gap-2 border-t p-2 pb-[env(safe-area-inset-bottom,0.5rem)]"
-        style={{ backgroundColor: CARD_BG, borderColor: "rgba(37, 99, 235, 0.25)" }}
+        className="fixed bottom-0 left-0 right-0 z-30 flex w-full gap-2 border-t p-2 pb-[env(safe-area-inset-bottom,0.5rem)] backdrop-blur-md"
+        style={{
+          backgroundColor: "rgba(30, 41, 59, 0.98)",
+          borderColor: "rgba(37, 99, 235, 0.25)",
+          boxShadow: "0 -4px 12px rgba(0,0,0,0.25)",
+        }}
       >
         <Button
           type="button"
@@ -894,7 +924,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
             className={`min-h-[44px] flex-1 text-sm font-semibold text-white ${BTN_GRADIENT} disabled:opacity-70`}
             style={BTN_GRADIENT_STYLE}
           >
-            {finalizando ? "Enviando…" : "FINALIZAR ATENCIÓN"}
+            {finalizando ? "Guardando…" : "FINALIZAR ATENCIÓN"}
           </Button>
         )}
       </div>

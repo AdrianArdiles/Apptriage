@@ -2,12 +2,7 @@
 
 import * as React from "react";
 import { Input } from "@/components/ui/input";
-import {
-  DIAGNOSTICOS_TRIAGE,
-  buscarDiagnosticos,
-  encontrarPorLabel,
-  type DiagnosticoTriage,
-} from "@/constants/diagnostics";
+import { buscarDiagnosticos, encontrarPorLabel, type DiagnosticoTriage } from "@/constants/diagnostics";
 import { cn } from "@/lib/utils";
 
 /** Valor del combobox: codificado (de la lista) o texto libre. */
@@ -135,10 +130,6 @@ export function DiagnosticoComboboxTriage({
     }
   };
 
-  React.useEffect(() => {
-    console.log("Diagnósticos cargados:", DIAGNOSTICOS_TRIAGE.length);
-    console.log("Socio, el motor médico está en marcha.");
-  }, []);
 
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

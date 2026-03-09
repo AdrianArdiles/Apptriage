@@ -47,7 +47,6 @@ export async function pushAtencionToFirestore(
     ...(options.paramedicoEmail != null && options.paramedicoEmail !== "" ? { paramedicoEmail: options.paramedicoEmail.trim() } : {}),
   };
   const cleaned = cleanFirestoreObject(payload) as AtencionFirestorePayload;
-  console.log("[Firestore] Objeto a guardar en atenciones:", JSON.stringify(cleaned, null, 2));
   try {
     await addDoc(collection(fs, FIRESTORE_ATENCIONES_COLLECTION), cleaned);
   } catch (err: unknown) {

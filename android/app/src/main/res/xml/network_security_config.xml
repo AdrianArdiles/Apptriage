@@ -7,11 +7,22 @@
             <certificates src="user" />
         </trust-anchors>
     </base-config>
-    <!-- Dominio explícito: API en Vercel -->
+    <!-- API en Vercel -->
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">apptriage.vercel.app</domain>
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">10.0.2.2</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </domain-config>
+    <!-- Firebase Auth y Google (identitytoolkit, securetoken, googleapis); evita bloqueos por política de red -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">identitytoolkit.googleapis.com</domain>
+        <domain includeSubdomains="true">securetoken.googleapis.com</domain>
+        <domain includeSubdomains="true">firebaseapp.com</domain>
+        <domain includeSubdomains="true">googleapis.com</domain>
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />

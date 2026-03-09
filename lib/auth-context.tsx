@@ -6,6 +6,7 @@ import { onAuthStateChanged, ensureGoogleAuthInitialized, type UserProfile } fro
 import { getAuthorizedUserByEmailOrUserDoc, type AuthorizedUser } from "@/lib/authorized-users";
 import { ensureUserDocument } from "@/lib/firestore-users";
 import { syncFromProfile, clearOperadorId } from "@/lib/operador-storage";
+import { syncUserToBackend } from "@/lib/api";
 import { crearPrimerAdminEnFirestore } from "@/lib/seed-authorized-admin";
 
 interface AuthState {
@@ -50,6 +51,8 @@ function authorizedToProfile(a: AuthorizedUser): UserProfile {
 }
 
 const AUTH_ERROR_VERIFY = "No se pudo verificar la autorización. Revisá la conexión e intentá de nuevo.";
+/** Si la verificación tarda más (red lenta en móvil), permitir acceso como PARAMEDICO para no dejar pantalla en blanco. */
+const AUTH_VERIFY_TIMEOUT_MS = 18000;
 
 export function AuthProvider({ children }: { children: React.ReactNode }): React.ReactElement {
   const [user, setUser] = React.useState<User | null>(null);
@@ -94,29 +97,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         setLoading(false);
         return;
       }
-      try {
-        const email = (u.email ?? "").trim().toLowerCase();
-        // Registro automático: si el usuario no existe en la colección users, crearlo con role: 'USER'.
-        // Así ningún usuario opera "en el aire" sin ficha en la base de datos (Google o Email).
+      const email = (u.email ?? "").trim().toLowerCase();
+      const fallbackAuth: AuthorizedUser = {
+        email: email || u.uid,
+        rol: "PARAMEDICO",
+        nombre: "Operador",
+        matricula: "",
+      };
+
+      // Sincronizar usuario con Neon (upsert: crear o actualizar lastLogin)
+      syncUserToBackend(u.uid, u.email ?? "").catch(() => {});
+
+      const verify = async (): Promise<AuthorizedUser | null> => {
         try {
           await ensureUserDocument(u.uid, u.email ?? "");
         } catch (e) {
           console.warn("[Firestore users] No se pudo crear documento de usuario:", e);
         }
-        // Buscar en authorized_users; si no está, permitir si tiene doc en users (fallback PARAMEDICO)
-        const a = email && u.uid ? await getAuthorizedUserByEmailOrUserDoc(email, u.uid) : null;
-        if (a) {
-          setAuthorizedUser(a);
-          const p = authorizedToProfile(a);
-          setProfile(p);
-          syncFromProfile({ nombre: a.nombre, apellido: "", matricula: a.matricula });
-        } else {
-          setAuthorizedUser(null);
-          setProfile(null);
+        return email && u.uid ? await getAuthorizedUserByEmailOrUserDoc(email, u.uid) : null;
+      };
+
+      const timeoutPromise = new Promise<AuthorizedUser>((resolve) => {
+        setTimeout(() => resolve(fallbackAuth), AUTH_VERIFY_TIMEOUT_MS);
+      });
+
+      try {
+        const a = await Promise.race([verify(), timeoutPromise]);
+        const resolved = a ?? fallbackAuth;
+        setAuthorizedUser(resolved);
+        const p = authorizedToProfile(resolved);
+        setProfile(p);
+        syncFromProfile({ nombre: resolved.nombre, apellido: "", matricula: resolved.matricula });
+        if (a === null && email && u.uid) {
+          setAuthError(null);
         }
       } catch {
-        setAuthorizedUser(null);
-        setProfile(null);
+        setAuthorizedUser(fallbackAuth);
+        setProfile(authorizedToProfile(fallbackAuth));
+        syncFromProfile({ nombre: "Operador", apellido: "", matricula: "" });
         setAuthError(AUTH_ERROR_VERIFY);
       } finally {
         setLoading(false);

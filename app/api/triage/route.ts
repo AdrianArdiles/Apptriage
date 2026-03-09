@@ -24,7 +24,6 @@ export async function OPTIONS(): Promise<NextResponse> {
 
 export async function POST(request: Request): Promise<NextResponse> {
   const rawText = await request.text();
-  console.log("=== TEXTO RECIBIDO ===", rawText);
 
   let data: Record<string, unknown>;
   try {

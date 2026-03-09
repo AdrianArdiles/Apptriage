@@ -3,9 +3,9 @@ import { CapacitorHttp } from "@capacitor/core";
 
 /**
  * Base URL de la API. Resolución:
- * - NEXT_PUBLIC_API_URL definida (build) → se usa (ej. Vercel, APK).
- * - Navegador en localhost (desarrollo, no Capacitor) → mismo origen (ej. http://localhost:3000).
- * - Resto (APK sin env, producción web) → https://apptriage.vercel.app.
+ * - NEXT_PUBLIC_API_URL definida → se usa (obligatorio para APK en producción).
+ * - Navegador en localhost (desarrollo) → mismo origen (window.location).
+ * - Resto → fallback apptriage.vercel.app.
  */
 function getApiBaseUrl(): string {
   const fromEnv = typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_URL?.trim();
@@ -30,6 +30,130 @@ export const TRIAGE_API_URL = `${API_BASE_URL}/api/triage`;
 export function apiUrl(path: string): string {
   const normalized = path.startsWith("/") ? path : `/${path}`;
   return `${getApiBaseUrl()}${normalized}`;
+}
+
+/** URL del endpoint de atenciones (Finalizar Atención - Opción D). */
+export const ATENCIONES_API_URL = `${getApiBaseUrl()}/api/atenciones`;
+
+export type { AtencionFromApi } from "@/lib/types-atenciones-api";
+
+/**
+ * Lista atenciones desde Neon (GET /api/atenciones). Orden por fecha descendente.
+ */
+export async function getAtencionesFromApi(): Promise<import("@/lib/types-atenciones-api").AtencionFromApi[]> {
+  try {
+    if (Capacitor.isNativePlatform()) {
+      const response = await CapacitorHttp.request({
+        method: "GET",
+        url: ATENCIONES_API_URL,
+        headers: { Accept: "application/json" },
+      });
+      const data = response.data;
+      return Array.isArray(data) ? (data as import("@/lib/types-atenciones-api").AtencionFromApi[]) : [];
+    }
+    const response = await fetch(ATENCIONES_API_URL, { method: "GET", headers: { Accept: "application/json" } });
+    if (!response.ok) return [];
+    const data = await response.json();
+    return Array.isArray(data) ? (data as import("@/lib/types-atenciones-api").AtencionFromApi[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Elimina una atención en Neon (DELETE /api/atenciones?id=atencionId).
+ */
+export async function deleteAtencionApi(atencionId: string): Promise<{ ok: boolean }> {
+  const url = `${ATENCIONES_API_URL}?id=${encodeURIComponent(atencionId)}`;
+  try {
+    if (Capacitor.isNativePlatform()) {
+      const response = await CapacitorHttp.request({ method: "DELETE", url, headers: { Accept: "application/json" } });
+      return { ok: response.status >= 200 && response.status < 300 };
+    }
+    const response = await fetch(url, { method: "DELETE", headers: { Accept: "application/json" } });
+    return { ok: response.ok };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/** URL del endpoint de sync de usuarios (tras login/registro Firebase). */
+const USERS_SYNC_URL = `${getApiBaseUrl()}/api/users/sync`;
+
+/**
+ * Sincroniza el usuario con Neon (upsert por uid). Se llama tras autenticación exitosa (Google o Email).
+ * No lanza; si falla solo se registra en consola.
+ */
+export async function syncUserToBackend(uid: string, email: string): Promise<void> {
+  const payload = { uid: uid.trim(), email: (email ?? "").trim() };
+  try {
+    if (Capacitor.isNativePlatform()) {
+      await CapacitorHttp.request({
+        method: "POST",
+        url: USERS_SYNC_URL,
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        data: payload,
+      });
+    } else {
+      await fetch(USERS_SYNC_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(payload),
+      });
+    }
+  } catch (e) {
+    console.warn("[syncUserToBackend] No se pudo sincronizar con el backend:", e);
+  }
+}
+
+const POST_ATENCION_TIMEOUT_MS = 15000;
+
+/**
+ * Envía una atención a la API de Vercel (POST /api/atenciones).
+ * Timeout 15 s con AbortController (web) o Promise.race (nativo). En error de red o timeout lanza.
+ * Devuelve { status, data } solo si hubo respuesta; 200/201 = éxito.
+ */
+export async function postAtencion(payload: Record<string, unknown>): Promise<{ status: number; data: { id?: string; report_id?: string | null; error?: string } }> {
+  const url = ATENCIONES_API_URL;
+  const headers = { "Content-Type": "application/json", Accept: "application/json" };
+
+  if (Capacitor.isNativePlatform()) {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("TIMEOUT")), POST_ATENCION_TIMEOUT_MS);
+    });
+    const requestPromise = (async () => {
+      const response = await CapacitorHttp.request({
+        method: "POST",
+        url,
+        headers,
+        data: payload,
+      });
+      const data = (response.data ?? {}) as { id?: string; report_id?: string | null; error?: string };
+      return { status: response.status, data };
+    })();
+    const result = await Promise.race([requestPromise, timeoutPromise]);
+    return result;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), POST_ATENCION_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    const data = (await response.json().catch(() => ({}))) as { id?: string; report_id?: string | null; error?: string };
+    return { status: response.status, data };
+  } catch (e) {
+    clearTimeout(timeoutId);
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error("TIMEOUT");
+    }
+    throw e;
+  }
 }
 
 /**
@@ -95,7 +219,6 @@ function cleanData(datos: PayloadTriage): Record<string, unknown> {
  */
 async function enviarTriage(data: Record<string, unknown>): Promise<{ status: number; data: unknown }> {
   const url = `${TRIAGE_API_URL}?t=${Date.now()}`;
-  console.log("Datos a enviar:", data);
   const headers = {
     "Content-Type": "application/json",
     Accept: "application/json",

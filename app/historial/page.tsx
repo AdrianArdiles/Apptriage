@@ -11,10 +11,7 @@ import {
   removeFromHistorialPdf,
   type HistorialPdfEntry,
 } from "@/lib/historial-pdf-storage";
-import {
-  getAtencionesFromFirebase,
-  removeAtencionFromFirebase,
-} from "@/lib/firebase-atenciones";
+import { getAtencionesFromApi, deleteAtencionApi } from "@/lib/api";
 import { Capacitor } from "@capacitor/core";
 import { getPDFBlob } from "@/lib/pdf-export";
 import { getLogoDataUrl } from "@/lib/logo-image";
@@ -133,10 +130,13 @@ function formatFileName(hora: string, paciente: string): string {
   return `Reporte_${hora.replace(":", "-")}_${safeName}.pdf`;
 }
 
+/** Entrada del historial: base local + atencionId para borrar en Neon. */
+type HistorialEntry = HistorialPdfEntry & { atencionId?: string };
+
 export default function HistorialPage(): React.ReactElement {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const [list, setList] = React.useState<HistorialPdfEntry[]>([]);
+  const [list, setList] = React.useState<HistorialEntry[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [busqueda, setBusqueda] = React.useState("");
   const [actionLoadingId, setActionLoadingId] = React.useState<string | null>(null);
@@ -150,9 +150,9 @@ export default function HistorialPage(): React.ReactElement {
   const refreshList = React.useCallback(async () => {
     const localList = getHistorialPdfList();
     try {
-      const firebaseList = await getAtencionesFromFirebase();
-      const byId = new Map<string, HistorialPdfEntry>();
-      firebaseList.forEach((e) => {
+      const apiList = await getAtencionesFromApi();
+      const byId = new Map<string, HistorialEntry>();
+      apiList.forEach((e) => {
         byId.set(e.id, {
           id: e.id,
           createdAt: e.createdAt,
@@ -161,6 +161,7 @@ export default function HistorialPage(): React.ReactElement {
           operadorId: e.operadorId,
           unidadId: e.unidadId,
           data: e.data,
+          atencionId: e.atencionId,
         });
       });
       localList.forEach((e) => {
@@ -168,7 +169,7 @@ export default function HistorialPage(): React.ReactElement {
         if (existing) {
           byId.set(e.id, { ...existing, fileUri: e.fileUri ?? existing.fileUri });
         } else {
-          byId.set(e.id, e);
+          byId.set(e.id, { ...e });
         }
       });
       const merged = Array.from(byId.values()).sort(
@@ -176,7 +177,7 @@ export default function HistorialPage(): React.ReactElement {
       );
       setList(merged);
     } catch {
-      setList(localList);
+      setList(localList.map((e) => ({ ...e })));
     }
   }, []);
 
@@ -248,11 +249,11 @@ export default function HistorialPage(): React.ReactElement {
   }, []);
 
   const handleEliminar = React.useCallback(
-    (id: string) => {
+    async (id: string, atencionId?: string) => {
       removeFromHistorialPdf(id);
-      removeAtencionFromFirebase(id);
+      if (atencionId) await deleteAtencionApi(atencionId);
       setDeleteConfirmId(null);
-      refreshList();
+      await refreshList();
     },
     [refreshList]
   );
@@ -328,7 +329,7 @@ export default function HistorialPage(): React.ReactElement {
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center py-16 text-slate-400">Cargando…</div>
+          <div className="flex items-center justify-center py-16 text-slate-400">Cargando atenciones…</div>
         ) : list.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center">
             <div
@@ -496,7 +497,11 @@ export default function HistorialPage(): React.ReactElement {
             </button>
             <button
               type="button"
-              onClick={() => deleteConfirmId && handleEliminar(deleteConfirmId)}
+              onClick={() => {
+                if (!deleteConfirmId) return;
+                const entry = list.find((e) => e.id === deleteConfirmId);
+                void handleEliminar(deleteConfirmId, entry?.atencionId);
+              }}
               className="min-h-[44px] rounded-xl border-2 px-4 py-2.5 text-sm font-semibold text-red-300"
               style={{ borderColor: RED_EMERGENCY }}
             >

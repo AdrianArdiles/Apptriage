@@ -1,13 +1,12 @@
-// Prisma schema - Triage Médico
-// Por defecto: SQLite (desarrollo). Para Supabase: cambiar provider a "postgresql"
-// y DATABASE_URL a la connection string de Supabase (Settings > Database).
+// Prisma schema - Triage Médico + Atenciones (Opción D)
+// Base de datos: Neon Postgres. DATABASE_URL en .env (local) y en Vercel (producción).
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -19,4 +18,32 @@ model Consulta {
   gravedad_ia     Int      // 1-5 (1 = No urgente, 5 = Resucitación)
   color_alerta    String   // ej. "green", "yellow", "orange", "red", "darkred"
   timestamp       DateTime @default(now())
+}
+
+// ---------- Usuarios (sync desde Firebase Auth) ----------
+model User {
+  id        String   @id @default(cuid())
+  uid       String   @unique // Firebase Auth UID
+  email     String
+  role      String   @default("USER")
+  lastLogin DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+// ---------- Atenciones (Finalizar Atención) - fuente de verdad ----------
+
+model Atencion {
+  id                 String   @id @default(cuid())
+  report_id          String?  // ID generado en cliente (ej. pdf-1234567890-abc) para enlazar con PDF
+  created_at         DateTime @default(now())
+  nombre_paciente    String   // requerido; valor por defecto "Sin nombre" si viene vacío
+  paciente_id        String   // requerido; valor por defecto "sin-id" si viene vacío
+  sintomas_texto     String?  // síntomas / observaciones del paciente
+  paramedico_nombre  String?
+  paramedico_email   String?
+  operador_id        String?
+  unidad_id          String?
+  diagnostico_codigo String?
+  // Todos los campos de triaje, signos vitales y paciente (objeto anidado)
+  data               String   // JSON: ReportSummaryData (xabcde, signos_vitales, glasgow, timestamp_eventos, etc.)
 }

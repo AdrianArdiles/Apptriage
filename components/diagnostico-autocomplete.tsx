@@ -2,11 +2,7 @@
 
 import * as React from "react";
 import { Input } from "@/components/ui/input";
-import {
-  DIAGNOSTICOS_EMERGENCIAS,
-  filtrarDiagnosticos,
-  type DiagnosticoCIE,
-} from "@/lib/diagnosticos-emergencias";
+import { filtrarDiagnosticos, type DiagnosticoCIE } from "@/lib/diagnosticos-emergencias";
 import { cn } from "@/lib/utils";
 
 const INPUT_DARK =
@@ -102,10 +98,6 @@ export function DiagnosticoAutocomplete({
     }
   };
 
-  React.useEffect(() => {
-    console.log("Diagnósticos cargados:", DIAGNOSTICOS_EMERGENCIAS.length);
-    console.log("Socio, el motor médico está en marcha.");
-  }, []);
 
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

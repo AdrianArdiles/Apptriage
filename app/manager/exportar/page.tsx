@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { getAtencionesFromFirebase, type AtencionFirebaseEntry } from "@/lib/firebase-atenciones";
+import { getAtencionesFromApi, type AtencionFromApi } from "@/lib/api";
 import { getPDFBlob } from "@/lib/pdf-export";
 import { getLogoDataUrl } from "@/lib/logo-image";
 
@@ -15,7 +15,7 @@ function escapeCsvCell(value: unknown): string {
   return s;
 }
 
-function atencionesToCsv(rows: AtencionFirebaseEntry[]): string {
+function atencionesToCsv(rows: AtencionFromApi[]): string {
   const headers = [
     "id",
     "createdAt",
@@ -38,7 +38,7 @@ function atencionesToCsv(rows: AtencionFirebaseEntry[]): string {
         e.pacienteId,
         e.operadorId,
         e.unidadId,
-        (data as { sintomas_texto?: string }).sintomas_texto,
+        e.sintomas_texto ?? (data as { sintomas_texto?: string }).sintomas_texto,
         (data as { glasgow_score?: number }).glasgow_score,
         (data as { hora_inicio_atencion?: string }).hora_inicio_atencion,
       ].map(escapeCsvCell).join(",")
@@ -57,12 +57,12 @@ function downloadBlob(blob: Blob, filename: string): void {
 }
 
 export default function ManagerExportarPage(): React.ReactElement {
-  const [atenciones, setAtenciones] = React.useState<AtencionFirebaseEntry[]>([]);
+  const [atenciones, setAtenciones] = React.useState<AtencionFromApi[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [exportingPdf, setExportingPdf] = React.useState(false);
 
   React.useEffect(() => {
-    getAtencionesFromFirebase().then(setAtenciones).finally(() => setLoading(false));
+    getAtencionesFromApi().then(setAtenciones).finally(() => setLoading(false));
   }, []);
 
   const handleExportCsv = () => {
@@ -99,7 +99,7 @@ export default function ManagerExportarPage(): React.ReactElement {
   if (loading) {
     return (
       <div className="rounded-xl border p-8 text-center" style={{ backgroundColor: CARD_BG, borderColor: BORDER_SUBTLE }}>
-        <p className="text-slate-400">Cargando historial…</p>
+        <p className="text-slate-400">Cargando atenciones…</p>
       </div>
     );
   }
@@ -113,7 +113,10 @@ export default function ManagerExportarPage(): React.ReactElement {
 
       <div className="mb-6 rounded-xl border p-4" style={{ backgroundColor: CARD_BG, borderColor: BORDER_SUBTLE }}>
         <p className="text-slate-300">
-          Total de atenciones en Firebase: <strong className="text-white">{atenciones.length}</strong>
+          Total de atenciones: <strong className="text-white">{atenciones.length}</strong>
+          {atenciones.length === 0 && (
+            <span className="ml-2 text-slate-500">(no hay atenciones guardadas en la base de datos)</span>
+          )}
         </p>
       </div>
 

@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { clearFichaClinica } from "@/lib/ficha-clinica-storage";
-import { getOperadorId, getUnidadId, getAtendidoPor } from "@/lib/operador-storage";
+import { getOperadorId, getUnidadId } from "@/lib/operador-storage";
 import { syncIntervencionToFirebase, removeIntervencionFromFirebase } from "@/lib/firebase-intervenciones";
 import {
   savePendingFirebaseSync,
@@ -23,9 +23,6 @@ import {
 } from "@/lib/registro-to-finalize";
 import { generateAndSharePDF } from "@/lib/share-pdf";
 import { addToHistorialPdf } from "@/lib/historial-pdf-storage";
-import { pushAtencionToFirebase } from "@/lib/firebase-atenciones";
-import { pushAtencionToFirestore } from "@/lib/firestore-atenciones";
-import { sanitizeFirestoreData } from "@/lib/clean-object";
 import type { NivelGravedad, NivelTriageNombre, RegistroTriage } from "@/lib/types";
 import {
   DiagnosticoComboboxTriage,
@@ -122,30 +119,12 @@ export function TriageResult({
     );
     try {
       const { fileUri, reportId } = await generateAndSharePDF(data);
-      const entry = addToHistorialPdf(data, {
+      addToHistorialPdf(data, {
         operadorId: operadorId || undefined,
         unidadId: unidadId || undefined,
         fileUri,
         id: reportId,
       });
-      const atencionEntry = {
-        id: entry.id,
-        createdAt: entry.createdAt,
-        nombrePaciente: entry.nombrePaciente,
-        pacienteId: entry.pacienteId,
-        operadorId: entry.operadorId,
-        unidadId: entry.unidadId,
-        data: entry.data,
-        diagnostico_codigo: impresionClinica?.cie11,
-      };
-      const cleanData = sanitizeFirestoreData(atencionEntry);
-      await pushAtencionToFirebase(cleanData as typeof atencionEntry, impresionClinica ?? undefined);
-      const paramedicoNombre = getAtendidoPor() || operadorId || "Paramédico";
-      try {
-        await pushAtencionToFirestore(cleanData as typeof atencionEntry, { paramedicoNombre });
-      } catch (fsErr) {
-        console.warn("[Firestore] Error guardando en atenciones:", fsErr);
-      }
       setMensajeExito("Reporte Guardado Exitosamente");
       setGuardadoExitoso(true);
     } catch (e) {
