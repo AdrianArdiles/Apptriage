@@ -37,6 +37,7 @@ export interface EstadisticasChartsProps {
 }
 
 export function EstadisticasCharts({ filtro, filtered }: EstadisticasChartsProps): React.ReactElement {
+  void filtro; // reservado para etiquetado por período en futuras mejoras
   const porNivel = React.useMemo(() => {
     const counts: Record<NivelGravedad, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
     filtered.forEach((e) => {

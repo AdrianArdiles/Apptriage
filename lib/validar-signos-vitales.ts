@@ -15,8 +15,6 @@ export interface ResultadoValidacionSignosVitales {
 }
 
 // Rangos de referencia (adulto; ajustables por protocolo)
-const FC_MIN_NORMAL = 60;
-const FC_MAX_NORMAL = 100;
 const FC_BRADICARDIA = 60;
 const FC_TAQUICARDIA = 100;
 const TA_SISTOLICA_HIPOTENSION = 90;
