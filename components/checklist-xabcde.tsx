@@ -30,6 +30,7 @@ import { syncIntervencionToFirebase, removeIntervencionFromFirebase } from "@/li
 import { postAtencion } from "@/lib/api";
 import { hapticImpactMedium } from "@/lib/haptics";
 import { ToastTimestamp } from "@/components/toast-timestamp";
+import { StickyFooter } from "@/components/sticky-footer";
 
 export type EstadoXABCDE = "pendiente" | "ok" | "no-aplica";
 
@@ -347,6 +348,9 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
   ]);
 
   const registrarInicio = React.useCallback(() => {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[Checklist] registrarInicio — inicio instantáneo a las", new Date().toISOString());
+    }
     const now = new Date();
     setHoraInicio(formatHora(now));
     setInicioRegistrado(true);
@@ -802,7 +806,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
   return (
     <form
       onSubmit={handleSubmit}
-      className="relative flex h-[100dvh] h-screen flex-col overflow-hidden"
+      className="relative flex h-[100dvh] max-h-screen w-full flex-col overflow-hidden"
     >
       <ToastTimestamp message={toastMessage} onDismiss={() => setToastMessage(null)} />
 
@@ -896,24 +900,14 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
         </button>
       </section>
 
-      {/* Cuerpo central: ÚNICO área con scroll */}
+      {/* Cuerpo central: ÚNICO área con scroll; pb-24 para no quedar tapado por StickyFooter */}
       <div
-        className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-2 ${currentStep === 9 ? "pr-14" : ""}`}
-        style={{ paddingBottom: "calc(0.5rem + 3.5rem)" }}
+        className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-24 ${currentStep === 9 ? "pr-14" : ""}`}
       >
         <div className="px-2 pt-2">{renderStepContent()}</div>
       </div>
 
-      {/* Barra de navegación FIJA (bottom: 0), siempre visible */}
-      <div
-        className="fixed bottom-0 left-0 right-0 z-30 flex w-full gap-2 border-t p-2 backdrop-blur-md"
-        style={{
-          backgroundColor: "rgba(30, 41, 59, 0.98)",
-          borderColor: "rgba(37, 99, 235, 0.25)",
-          boxShadow: "0 -4px 12px rgba(0,0,0,0.25)",
-          paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))",
-        }}
-      >
+      <StickyFooter>
         <Button
           type="button"
           onClick={goBack}
@@ -943,7 +937,7 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
             {finalizando ? "Guardando…" : puedeFinalizarAtencion ? "FINALIZAR ATENCIÓN" : "Finalizar (registre Llegada)"}
           </Button>
         )}
-      </div>
+      </StickyFooter>
     </form>
   );
 }
