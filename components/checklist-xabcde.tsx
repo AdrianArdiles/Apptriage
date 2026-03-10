@@ -31,7 +31,6 @@ import { postAtencion } from "@/lib/api";
 import { generateReportId } from "@/lib/report-id";
 import { hapticImpactMedium } from "@/lib/haptics";
 import { ToastTimestamp } from "@/components/toast-timestamp";
-import { StickyFooter } from "@/components/sticky-footer";
 
 export type EstadoXABCDE = "pendiente" | "ok" | "no-aplica";
 
@@ -802,32 +801,9 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
   return (
     <form
       onSubmit={handleSubmit}
-      className="relative flex h-[100dvh] max-h-screen w-full flex-col overflow-hidden"
+      className="relative flex min-h-0 w-full flex-1 flex-col overflow-hidden"
     >
       <ToastTimestamp message={toastMessage} onDismiss={() => setToastMessage(null)} />
-
-      {/* FAB RCP: fijo justo encima de la barra de navegación */}
-      <div
-        className="fixed right-3 z-40 flex h-11 w-11 items-center justify-center rounded-full shadow-lg backdrop-blur-md transition active:scale-95 bottom-[calc(6rem+env(safe-area-inset-bottom))]"
-        style={{
-          backgroundColor: "rgba(220, 38, 38, 0.95)",
-          border: "2px solid rgba(255,255,255,0.2)",
-        }}
-      >
-        {rcpCount > 0 && (
-          <span className="absolute -right-0.5 -top-0.5 z-10 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white" aria-label={`RCP ${rcpCount}`}>
-            {rcpCount}
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={() => agregarTimestamp("Registro RCP")}
-          className={`absolute inset-0 flex items-center justify-center rounded-full text-[10px] font-bold uppercase text-white hover:bg-red-500/90 ${fabPulsing ? "animate-button-flash" : ""}`}
-          aria-label="Registrar RCP"
-        >
-          RCP
-        </button>
-      </div>
 
       {/* Header fijo: indicador de pasos (sin scroll) */}
       <header className="shrink-0 border-b border-slate-700/50 bg-[#1e293b] px-2 pt-1.5 pb-1.5">
@@ -895,44 +871,69 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
         </button>
       </section>
 
-      {/* Cuerpo central: ÚNICO área con scroll; pb-40 para que el último elemento quede por encima de la barra fija */}
+      {/* Cuerpo central: ÚNICO elemento con scroll; pb-32 para no quedar tapado por el footer fijo */}
       <div
-        className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-40 ${currentStep === 9 ? "pr-14" : ""}`}
+        className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-32 ${currentStep === 9 ? "pr-14" : ""}`}
       >
-        <div className="px-2 pt-2">{renderStepContent()}</div>
+        <div className="pt-2">{renderStepContent()}</div>
       </div>
 
-      <StickyFooter>
-        <Button
-          type="button"
-          onClick={goBack}
-          disabled={currentStep === 0}
-          className="min-h-[44px] flex-1 touch-manipulation rounded-lg border-2 text-sm font-semibold text-slate-100 transition active:scale-[0.98] disabled:opacity-40"
-          style={{ borderColor: "rgba(37, 99, 235, 0.5)", backgroundColor: "rgba(15, 23, 42, 0.95)" }}
+      {/* Barra de navegación anclada al viewport (fixed); RCP flotante encima */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-800 bg-slate-900 p-4">
+        {/* FAB RCP: justo encima de la barra */}
+        <div
+          className="absolute bottom-[calc(100%+1rem)] right-4 z-10 flex h-11 w-11 items-center justify-center rounded-full shadow-lg backdrop-blur-md transition active:scale-95"
+          style={{
+            backgroundColor: "rgba(220, 38, 38, 0.95)",
+            border: "2px solid rgba(255,255,255,0.2)",
+          }}
         >
-          ANTERIOR
-        </Button>
-        {currentStep < TOTAL_STEPS - 1 ? (
-          <Button type="button" onClick={goNext} className={`min-h-[44px] flex-1 text-sm text-white ${BTN_GRADIENT} ${isGlasgowStepComplete ? "opacity-95" : ""}`} style={BTN_GRADIENT_STYLE}>
-            SIGUIENTE
-          </Button>
-        ) : atencionFinalizada ? (
-          <Button type="button" onClick={handleNuevaAtencionClick} className={`min-h-[44px] flex-1 text-sm font-semibold text-white ${BTN_GRADIENT}`} style={BTN_GRADIENT_STYLE}>
-            NUEVA ATENCIÓN
-          </Button>
-        ) : (
+          {rcpCount > 0 && (
+            <span className="absolute -right-0.5 -top-0.5 z-10 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] font-bold text-white" aria-label={`RCP ${rcpCount}`}>
+              {rcpCount}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => agregarTimestamp("Registro RCP")}
+            className={`absolute inset-0 flex items-center justify-center rounded-full text-[10px] font-bold uppercase text-white hover:bg-red-500/90 ${fabPulsing ? "animate-button-flash" : ""}`}
+            aria-label="Registrar RCP"
+          >
+            RCP
+          </button>
+        </div>
+        <div className="flex gap-2">
           <Button
             type="button"
-            onClick={handleFinalizarAtencion}
-            disabled={finalizando || !puedeFinalizarAtencion}
-            title={!puedeFinalizarAtencion ? "Registre «Llegada al Hospital» en la botonera para habilitar" : undefined}
-            className={`min-h-[44px] flex-1 text-sm font-semibold text-white ${BTN_GRADIENT} disabled:opacity-70`}
-            style={BTN_GRADIENT_STYLE}
+            onClick={goBack}
+            disabled={currentStep === 0}
+            className="min-h-[44px] flex-1 touch-manipulation rounded-lg border-2 text-sm font-semibold text-slate-100 transition active:scale-[0.98] disabled:opacity-40"
+            style={{ borderColor: "rgba(37, 99, 235, 0.5)", backgroundColor: "rgba(15, 23, 42, 0.95)" }}
           >
-            {finalizando ? "Guardando…" : puedeFinalizarAtencion ? "FINALIZAR ATENCIÓN" : "Finalizar (registre Llegada)"}
+            ANTERIOR
           </Button>
-        )}
-      </StickyFooter>
+          {currentStep < TOTAL_STEPS - 1 ? (
+            <Button type="button" onClick={goNext} className={`min-h-[44px] flex-1 text-sm text-white ${BTN_GRADIENT} ${isGlasgowStepComplete ? "opacity-95" : ""}`} style={BTN_GRADIENT_STYLE}>
+              SIGUIENTE
+            </Button>
+          ) : atencionFinalizada ? (
+            <Button type="button" onClick={handleNuevaAtencionClick} className={`min-h-[44px] flex-1 text-sm font-semibold text-white ${BTN_GRADIENT}`} style={BTN_GRADIENT_STYLE}>
+              NUEVA ATENCIÓN
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={handleFinalizarAtencion}
+              disabled={finalizando || !puedeFinalizarAtencion}
+              title={!puedeFinalizarAtencion ? "Registre «Llegada al Hospital» en la botonera para habilitar" : undefined}
+              className={`min-h-[44px] flex-1 text-sm font-semibold text-white ${BTN_GRADIENT} disabled:opacity-70`}
+              style={BTN_GRADIENT_STYLE}
+            >
+              {finalizando ? "Guardando…" : puedeFinalizarAtencion ? "FINALIZAR ATENCIÓN" : "Finalizar (registre Llegada)"}
+            </Button>
+          )}
+        </div>
+      </div>
     </form>
   );
 }

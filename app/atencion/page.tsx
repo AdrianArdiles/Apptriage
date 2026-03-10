@@ -241,14 +241,14 @@ function AtencionContent(): React.ReactElement | null {
 
   return (
     <div
-      className={`min-h-screen font-sans text-slate-100 transition-all duration-300 ${
+      className={`flex h-screen flex-col overflow-hidden font-sans text-slate-100 transition-all duration-300 ${
         mounted ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
       }`}
       style={{ backgroundColor: BG_DARK }}
     >
-      {/* Sticky header táctico: logo EKG + Paramédico / Móvil */}
+      {/* Header táctico: logo EKG + Paramédico / Móvil; safe area para notch/cámara */}
       <header
-        className="sticky top-0 z-40 border-b px-4 py-3 shadow-sm"
+        className="z-40 shrink-0 border-b px-4 py-3 pt-[env(safe-area-inset-top)] shadow-sm"
         style={{ backgroundColor: CARD_BG, borderColor: "rgba(37, 99, 235, 0.3)" }}
       >
         <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3">
@@ -318,9 +318,9 @@ function AtencionContent(): React.ReactElement | null {
         </div>
       )}
 
-      <main className="mx-auto w-full max-w-3xl p-2 sm:p-3">
+      <main className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-hidden p-2 sm:p-3">
         {!resultado && (
-          <div className="mb-1.5 flex justify-end">
+          <div className="mb-1.5 flex shrink-0 justify-end">
             <button
               type="button"
               onClick={() => setModalCancelarOpen(true)}
@@ -333,42 +333,44 @@ function AtencionContent(): React.ReactElement | null {
           </div>
         )}
         {error && (
-          <div role="alert" className="mb-2 rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-xs text-red-200">
+          <div role="alert" className="mb-2 shrink-0 rounded-lg border border-red-800 bg-red-900/30 px-3 py-2 text-xs text-red-200">
             {error}
           </div>
         )}
         {queueMessage && (
-          <div role="status" className="mb-2 rounded-lg border border-emerald-700 bg-emerald-900/30 px-3 py-2 text-xs text-emerald-200">
+          <div role="status" className="mb-2 shrink-0 rounded-lg border border-emerald-700 bg-emerald-900/30 px-3 py-2 text-xs text-emerald-200">
             {queueMessage}
           </div>
         )}
         {pendingCount > 0 && !queueMessage && (
-          <div role="status" className="mb-2 rounded-lg border border-amber-700 bg-amber-900/30 px-3 py-1.5 text-xs text-amber-200">
+          <div role="status" className="mb-2 shrink-0 rounded-lg border border-amber-700 bg-amber-900/30 px-3 py-1.5 text-xs text-amber-200">
             {pendingCount} en Pendientes. Se enviarán con conexión.
           </div>
         )}
 
         {resultado ? (
-          <TriageResult
-            registro={resultado}
-            onNuevoTriage={handleNuevoTriage}
-            onSugerirNivel={(nivel) => {
-              setResultado((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      nivel_gravedad: nivel,
-                      nivel:
-                        nivel === 5
-                          ? ("Resucitación (Inmediato)" as const)
-                          : prev.nivel,
-                    }
-                  : null
-              );
-            }}
-          />
+          <div className="min-h-0 flex-1 overflow-y-auto pb-32">
+            <TriageResult
+              registro={resultado}
+              onNuevoTriage={handleNuevoTriage}
+              onSugerirNivel={(nivel) => {
+                setResultado((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        nivel_gravedad: nivel,
+                        nivel:
+                          nivel === 5
+                            ? ("Resucitación (Inmediato)" as const)
+                            : prev.nivel,
+                      }
+                    : null
+                );
+              }}
+            />
+          </div>
         ) : (
-          <div className="relative min-h-[calc(100dvh-8rem)] min-h-[calc(100vh-8rem)]">
+          <div className="relative flex min-h-0 flex-1 flex-col">
             {isSubmitting && (
               <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl border backdrop-blur-sm" style={{ borderColor: "rgba(37, 99, 235, 0.3)", backgroundColor: "rgba(15, 23, 42, 0.95)" }} aria-live="polite">
                 <SpinnerMedico label="Enviando reporte a central…" />
@@ -425,11 +427,6 @@ function AtencionContent(): React.ReactElement | null {
           </DialogContent>
         </Dialog>
       </main>
-
-      <footer className="mt-16 border-t px-4 py-6 text-center text-sm text-slate-500 sm:px-6" style={{ borderColor: "rgba(51, 65, 85, 0.6)", backgroundColor: "rgba(30, 41, 59, 0.5)" }}>
-        <p>Ficha clínica para uso en ambulancia. Los datos se guardan localmente hasta enviar.</p>
-        <p className="mt-2 text-xs text-slate-500">Build: {buildId || "…"}</p>
-      </footer>
     </div>
   );
 }

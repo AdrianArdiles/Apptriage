@@ -82,27 +82,31 @@ const USERS_SYNC_URL = `${getApiBaseUrl()}/api/users/sync`;
 
 /**
  * Sincroniza el usuario con Neon (upsert por uid). Se llama tras autenticación exitosa (Google o Email).
+ * Devuelve { ok: true, status: 200 } si la API respondió 200; si falla, { ok: false }.
  * No lanza; si falla solo se registra en consola.
  */
-export async function syncUserToBackend(uid: string, email: string): Promise<void> {
+export async function syncUserToBackend(uid: string, email: string): Promise<{ ok: boolean; status?: number }> {
   const payload = { uid: uid.trim(), email: (email ?? "").trim() };
   try {
     if (Capacitor.isNativePlatform()) {
-      await CapacitorHttp.request({
+      const response = await CapacitorHttp.request({
         method: "POST",
         url: USERS_SYNC_URL,
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         data: payload,
       });
-    } else {
-      await fetch(USERS_SYNC_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const status = typeof response.status === "number" ? response.status : 0;
+      return { ok: status >= 200 && status < 300, status };
     }
+    const res = await fetch(USERS_SYNC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return { ok: res.ok, status: res.status };
   } catch (e) {
     console.warn("[syncUserToBackend] No se pudo sincronizar con el backend:", e);
+    return { ok: false };
   }
 }
 

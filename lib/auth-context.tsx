@@ -51,8 +51,6 @@ function authorizedToProfile(a: AuthorizedUser): UserProfile {
 }
 
 const AUTH_ERROR_VERIFY = "No se pudo verificar la autorización. Revisá la conexión e intentá de nuevo.";
-/** Si la verificación tarda más (red lenta en móvil), permitir acceso como PARAMEDICO para no dejar pantalla en blanco. */
-const AUTH_VERIFY_TIMEOUT_MS = 18000;
 
 export function AuthProvider({ children }: { children: React.ReactNode }): React.ReactElement {
   const [user, setUser] = React.useState<User | null>(null);
@@ -105,44 +103,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         matricula: "",
       };
 
-      // Sincronizar usuario con Neon (upsert: crear o actualizar lastLogin)
-      syncUserToBackend(u.uid, u.email ?? "").catch(() => {});
+      // Acceso inmediato: Auth dio el visto bueno → permitir entrada con fallback (no bloquear por Firestore).
+      setAuthorizedUser(fallbackAuth);
+      setProfile(authorizedToProfile(fallbackAuth));
+      syncFromProfile({ nombre: fallbackAuth.nombre, apellido: "", matricula: fallbackAuth.matricula });
+      setLoading(false);
 
-      const verify = async (): Promise<AuthorizedUser | null> => {
+      // En segundo plano: sync con Neon y Firestore. Si sync devuelve 200, acceso ya permitido.
+      // Si Firestore falla (Transport Errored / offline), no redirigir ni bloquear.
+      (async () => {
+        const syncResult = await syncUserToBackend(u.uid, u.email ?? "");
+        if (syncResult.ok && syncResult.status === 200) {
+          // Backend aceptó al usuario; el acceso ya está permitido arriba.
+        }
+
+        let resolved: AuthorizedUser = fallbackAuth;
         try {
           await ensureUserDocument(u.uid, u.email ?? "");
         } catch (e) {
-          console.warn("[Firestore users] No se pudo crear documento de usuario:", e);
+          console.warn("[Firestore users] No se pudo crear documento de usuario (puede estar offline):", e);
         }
-        return email && u.uid ? await getAuthorizedUserByEmailOrUserDoc(email, u.uid) : null;
-      };
-
-      const timeoutPromise = new Promise<AuthorizedUser>((resolve) => {
-        setTimeout(() => resolve(fallbackAuth), AUTH_VERIFY_TIMEOUT_MS);
-      });
-
-      try {
-        const a = await Promise.race([verify(), timeoutPromise]);
-        const resolved = a ?? fallbackAuth;
+        try {
+          const a = email && u.uid ? await getAuthorizedUserByEmailOrUserDoc(email, u.uid) : null;
+          if (a) resolved = a;
+        } catch (e) {
+          console.warn("[Firestore authorized_users] Lectura en segundo plano fallida (puede estar offline):", e);
+        }
         setAuthorizedUser(resolved);
-        const p = authorizedToProfile(resolved);
-        setProfile(p);
+        setProfile(authorizedToProfile(resolved));
         syncFromProfile({ nombre: resolved.nombre, apellido: "", matricula: resolved.matricula });
-        if (a === null && email && u.uid) {
-          setAuthError(null);
-        }
-      } catch {
-        setAuthorizedUser(fallbackAuth);
-        setProfile(authorizedToProfile(fallbackAuth));
-        syncFromProfile({ nombre: "Operador", apellido: "", matricula: "" });
-        setAuthError(AUTH_ERROR_VERIFY);
-      } finally {
-        setLoading(false);
-      }
+      })();
     });
     return unsub;
   }, []);
 
+  // No bloquear entrada por Firestore: solo "no autorizado" si no hay user o aún loading (ya no dejamos authorizedUser null tras Auth).
   const isUnauthorized = Boolean(user && !authorizedUser && !loading);
 
   // Exponer en consola para crear el primer documento admin en Firestore (solo si sos ADMIN)

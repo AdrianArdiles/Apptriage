@@ -421,7 +421,7 @@ function LandingPage(): React.ReactElement {
 
   return (
     <div className="flex min-h-screen flex-col font-sans text-slate-100" style={{ backgroundColor: BG_DARK }}>
-      <main className="flex flex-1 flex-col items-center justify-center px-6 py-12">
+      <main className="mt-[env(safe-area-inset-top)] flex flex-1 flex-col items-center justify-center px-6 py-12">
         <div className="mb-6 flex items-center justify-center">
           <LogoEkg className="h-28 w-28 drop-shadow-[0_0_24px_rgba(37,99,235,0.4)]" />
         </div>
