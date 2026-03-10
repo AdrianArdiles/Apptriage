@@ -86,7 +86,6 @@ function AtencionContent(): React.ReactElement | null {
     React.useState<RegistroTriage | null>(null);
   const [modalConfirmacionOpen, setModalConfirmacionOpen] = React.useState(false);
   const [modalCancelarOpen, setModalCancelarOpen] = React.useState(false);
-  const [buildId, setBuildId] = React.useState<string>("");
   const [queueMessage, setQueueMessage] = React.useState<string | null>(null);
   const [pendingCount, setPendingCount] = React.useState(0);
   const [mounted, setMounted] = React.useState(false);
@@ -151,10 +150,6 @@ function AtencionContent(): React.ReactElement | null {
   React.useEffect(() => {
     refreshPendingCount();
   }, [queueMessage, resultado, refreshPendingCount]);
-
-  React.useEffect(() => {
-    setBuildId(new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "medium" }));
-  }, []);
 
   React.useEffect(() => {
     const process = () => {
