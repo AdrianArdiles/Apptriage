@@ -119,6 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       };
 
       // Acceso inmediato: Auth dio el visto bueno → permitir entrada con fallback (no bloquear por Firestore).
+      // Nunca se ejecuta signOut por error Firestore (unavailable/transport). signIn exitoso + sync 200 = acceso válido.
       setAuthorizedUser(fallbackAuth);
       setProfile(authorizedToProfile(fallbackAuth));
       syncFromProfile({ nombre: fallbackAuth.nombre, apellido: "", matricula: fallbackAuth.matricula });

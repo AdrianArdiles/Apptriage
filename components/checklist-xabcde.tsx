@@ -871,15 +871,15 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
         </button>
       </section>
 
-      {/* Cuerpo central: ÚNICO elemento con scroll; pb-32 para no quedar tapado por el footer fijo */}
+      {/* Cuerpo central: ÚNICO elemento con scroll; pb-40 para no quedar tapado por la botonera fija */}
       <div
-        className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-32 ${currentStep === 9 ? "pr-14" : ""}`}
+        className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 pb-40 ${currentStep === 9 ? "pr-14" : ""}`}
       >
         <div className="pt-2">{renderStepContent()}</div>
       </div>
 
-      {/* Barra de navegación anclada al viewport (fixed); safe area para barra de gestos Android */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-800 bg-slate-900 p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+      {/* Botonera siempre visible: pegada al borde inferior con safe area (~2cm arriba del borde en celular) */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-800 bg-slate-900/95 p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] backdrop-blur-md">
         {/* FAB RCP: justo encima de la barra */}
         <div
           className="absolute bottom-[calc(100%+1rem)] right-4 z-10 flex h-11 w-11 items-center justify-center rounded-full shadow-lg backdrop-blur-md transition active:scale-95"

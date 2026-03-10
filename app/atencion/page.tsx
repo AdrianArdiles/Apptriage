@@ -236,7 +236,7 @@ function AtencionContent(): React.ReactElement | null {
 
   return (
     <div
-      className={`flex h-[100dvh] flex-col overflow-hidden font-sans text-slate-100 transition-all duration-300 ${
+      className={`flex h-[100dvh] w-full flex-col overflow-hidden font-sans text-slate-100 transition-all duration-300 ${
         mounted ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
       }`}
       style={{ backgroundColor: BG_DARK }}
@@ -313,6 +313,7 @@ function AtencionContent(): React.ReactElement | null {
         </div>
       )}
 
+      {/* Contenido central: único scroll dentro del checklist (flex-1 overflow-y-auto px-4 pb-40) */}
       <main className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-hidden p-2 sm:p-3">
         {!resultado && (
           <div className="mb-1.5 flex shrink-0 justify-end">
