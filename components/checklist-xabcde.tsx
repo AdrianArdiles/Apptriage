@@ -806,11 +806,10 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
     >
       <ToastTimestamp message={toastMessage} onDismiss={() => setToastMessage(null)} />
 
-      {/* FAB RCP: fijo sobre la barra, siempre visible */}
+      {/* FAB RCP: fijo justo encima de la barra de navegación */}
       <div
-        className="fixed right-3 z-40 flex h-11 w-11 items-center justify-center rounded-full shadow-lg backdrop-blur-md transition active:scale-95"
+        className="fixed right-3 z-40 flex h-11 w-11 items-center justify-center rounded-full shadow-lg backdrop-blur-md transition active:scale-95 bottom-[calc(6rem+env(safe-area-inset-bottom))]"
         style={{
-          bottom: "calc(3.5rem + env(safe-area-inset-bottom, 0.5rem))",
           backgroundColor: "rgba(220, 38, 38, 0.95)",
           border: "2px solid rgba(255,255,255,0.2)",
         }}
@@ -896,9 +895,9 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
         </button>
       </section>
 
-      {/* Cuerpo central: ÚNICO área con scroll; pb-24 para no quedar tapado por StickyFooter */}
+      {/* Cuerpo central: ÚNICO área con scroll; pb-40 para que el último elemento quede por encima de la barra fija */}
       <div
-        className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-24 ${currentStep === 9 ? "pr-14" : ""}`}
+        className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden pb-40 ${currentStep === 9 ? "pr-14" : ""}`}
       >
         <div className="px-2 pt-2">{renderStepContent()}</div>
       </div>

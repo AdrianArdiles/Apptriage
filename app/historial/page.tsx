@@ -31,11 +31,30 @@ const CARD_BG = "#1e293b";
 const BLUE_MEDICAL = "#2563eb";
 const RED_EMERGENCY = "#dc2626";
 
-function reportContainsRCP(entry: HistorialPdfEntry): boolean {
-  const events = entry.data.timestamp_eventos ?? [];
-  const hasRcpEvent = events.some((e) => String(e.evento).toUpperCase().includes("RCP"));
-  const text = (entry.data.sintomas_texto ?? "").toUpperCase();
+function reportContainsRCP(entry: HistorialPdfEntry | null | undefined): boolean {
+  const events = entry?.data?.timestamp_eventos ?? [];
+  const hasRcpEvent = Array.isArray(events) && events.some((e) => String(e?.evento ?? "").toUpperCase().includes("RCP"));
+  const text = (entry?.data?.sintomas_texto ?? "").toUpperCase();
   return hasRcpEvent || text.includes("RCP");
+}
+
+/** Parsea createdAt que puede ser ISO string (Neon) o Timestamp Firebase (.toDate()). */
+function parseCreatedAt(value: unknown): string {
+  if (value == null) return new Date(0).toISOString();
+  if (typeof value === "string") return value;
+  if (value instanceof Date) return value.toISOString();
+  const obj = value as { toDate?: () => Date };
+  if (typeof obj.toDate === "function") return obj.toDate().toISOString();
+  const d = new Date(value as string | number);
+  return Number.isNaN(d.getTime()) ? new Date(0).toISOString() : d.toISOString();
+}
+
+/** Formatea createdAt para mostrar (hora). Devuelve "—" si la fecha es inválida. */
+function formatCreatedAtDisplay(value: unknown): string {
+  const iso = parseCreatedAt(value);
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 }
 
 function EyeIcon({ className }: { className?: string }) {
@@ -152,24 +171,30 @@ export default function HistorialPage(): React.ReactElement {
     try {
       const apiList = await getAtencionesFromApi();
       const byId = new Map<string, HistorialEntry>();
-      apiList.forEach((e) => {
-        byId.set(e.id, {
-          id: e.id,
-          createdAt: e.createdAt,
-          nombrePaciente: e.nombrePaciente,
-          pacienteId: e.pacienteId,
-          operadorId: e.operadorId,
-          unidadId: e.unidadId,
-          data: e.data,
-          atencionId: e.atencionId,
+      (apiList ?? []).forEach((e) => {
+        const id = e?.id ?? "";
+        if (!id) return;
+        byId.set(id, {
+          id,
+          createdAt: parseCreatedAt(e?.createdAt),
+          nombrePaciente: e?.nombrePaciente ?? "Sin nombre",
+          pacienteId: e?.pacienteId ?? "",
+          operadorId: e?.operadorId,
+          unidadId: e?.unidadId,
+          data: e?.data && typeof e.data === "object" ? e.data : {},
+          atencionId: e?.atencionId,
         });
       });
       localList.forEach((e) => {
-        const existing = byId.get(e.id);
-        if (existing) {
+        const existing = byId.get(e?.id ?? "");
+        if (existing && e) {
           byId.set(e.id, { ...existing, fileUri: e.fileUri ?? existing.fileUri });
-        } else {
-          byId.set(e.id, { ...e });
+        } else if (e?.id) {
+          byId.set(e.id, {
+            ...e,
+            createdAt: parseCreatedAt(e.createdAt),
+            data: e?.data && typeof e.data === "object" ? e.data : {},
+          });
         }
       });
       const merged = Array.from(byId.values()).sort(
@@ -177,7 +202,7 @@ export default function HistorialPage(): React.ReactElement {
       );
       setList(merged);
     } catch {
-      setList(localList.map((e) => ({ ...e })));
+      setList(localList.map((e) => ({ ...e, data: e?.data && typeof e.data === "object" ? e.data : {} })));
     }
   }, []);
 
@@ -185,7 +210,7 @@ export default function HistorialPage(): React.ReactElement {
     const q = busqueda.trim().toLowerCase();
     if (!q) return list;
     return list.filter((entry) => {
-      const nombre = (entry.nombrePaciente || entry.pacienteId || "").toLowerCase();
+      const nombre = (entry?.nombrePaciente ?? entry?.pacienteId ?? "").toLowerCase();
       return nombre.includes(q);
     });
   }, [list, busqueda]);
@@ -372,86 +397,110 @@ export default function HistorialPage(): React.ReactElement {
           </div>
         ) : (
           <ul className="space-y-4">
-            {filtrados.map((entry) => {
-              const date = new Date(entry.createdAt);
-              const hora = date.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
-              const paciente = entry.nombrePaciente || entry.pacienteId || "Sin nombre";
-              const fileName = formatFileName(hora, paciente);
-              const isRcp = reportContainsRCP(entry);
-              const isBusy = actionLoadingId === entry.id;
+            {filtrados.map((entry, index) => {
+              try {
+                const id = entry?.id ?? `item-${index}`;
+                const hora = formatCreatedAtDisplay(entry?.createdAt);
+                const paciente = entry?.nombrePaciente ?? entry?.pacienteId ?? "Sin nombre";
+                const fileName = formatFileName(hora, paciente);
+                const isRcp = reportContainsRCP(entry);
+                const isBusy = actionLoadingId === id;
+                const safeEntry: HistorialEntry = {
+                  id,
+                  createdAt: parseCreatedAt(entry?.createdAt),
+                  nombrePaciente: entry?.nombrePaciente ?? "Sin nombre",
+                  pacienteId: entry?.pacienteId ?? "",
+                  data: entry?.data && typeof entry.data === "object" ? entry.data : {},
+                  fileUri: entry?.fileUri,
+                  operadorId: entry?.operadorId,
+                  unidadId: entry?.unidadId,
+                  atencionId: entry?.atencionId,
+                };
 
-              return (
-                <li
-                  key={entry.id}
-                  className="overflow-hidden rounded-xl shadow-sm"
-                  style={{
-                    backgroundColor: CARD_BG,
-                    borderLeftWidth: "4px",
-                    borderLeftColor: isRcp ? RED_EMERGENCY : BLUE_MEDICAL,
-                  }}
-                >
-                  <div className="flex min-w-0 flex-1 flex-col p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-base font-bold text-white">
-                        {hora} — {paciente}
-                      </p>
-                      <p className="mt-1 text-sm text-slate-400">
-                        Unidad: {entry.unidadId || "—"} | Operador: {entry.operadorId || "—"}
-                      </p>
-                      <p
-                        className="mt-2 truncate rounded-lg px-2 py-1 font-mono text-xs text-slate-300"
-                        style={{ backgroundColor: "rgba(15, 23, 42, 0.6)" }}
-                        title={fileName}
-                      >
-                        {fileName}
-                      </p>
+                return (
+                  <li
+                    key={id}
+                    className="overflow-hidden rounded-xl shadow-sm"
+                    style={{
+                      backgroundColor: CARD_BG,
+                      borderLeftWidth: "4px",
+                      borderLeftColor: isRcp ? RED_EMERGENCY : BLUE_MEDICAL,
+                    }}
+                  >
+                    <div className="flex min-w-0 flex-1 flex-col p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-base font-bold text-white">
+                          {hora} — {paciente}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-400">
+                          Unidad: {entry?.unidadId ?? "—"} | Operador: {entry?.operadorId ?? "—"}
+                        </p>
+                        <p
+                          className="mt-2 truncate rounded-lg px-2 py-1 font-mono text-xs text-slate-300"
+                          style={{ backgroundColor: "rgba(15, 23, 42, 0.6)" }}
+                          title={fileName}
+                        >
+                          {fileName}
+                        </p>
+                      </div>
+                      <div className="mt-3 flex items-center gap-2 sm:mt-0 sm:gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleAbrir(safeEntry);
+                          }}
+                          disabled={isBusy}
+                          className="flex min-h-[48px] min-w-[48px] touch-manipulation flex-col items-center justify-center rounded-xl transition hover:opacity-90 disabled:opacity-50"
+                          style={{ backgroundColor: BLUE_MEDICAL }}
+                          aria-label="Ver PDF"
+                        >
+                          <EyeIcon className="text-white" />
+                          <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
+                            Ver
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCompartir(safeEntry)}
+                          disabled={isBusy}
+                          className="flex min-h-[48px] min-w-[48px] flex-col items-center justify-center rounded-xl bg-emerald-600 transition hover:bg-emerald-500 disabled:opacity-50"
+                          aria-label="Compartir PDF"
+                        >
+                          <ShareIcon className="text-white" />
+                          <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
+                            Compartir
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeleteConfirmId(id)}
+                          disabled={isBusy}
+                          className="flex min-h-[48px] min-w-[48px] flex-col items-center justify-center rounded-xl bg-red-600/90 transition hover:bg-red-600 disabled:opacity-50"
+                          aria-label="Eliminar del historial"
+                        >
+                          <TrashIcon className="text-white" />
+                          <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
+                            Eliminar
+                          </span>
+                        </button>
+                      </div>
                     </div>
-                    <div className="mt-3 flex items-center gap-2 sm:mt-0 sm:gap-2">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          handleAbrir(entry);
-                        }}
-                        disabled={isBusy}
-                        className="flex min-h-[48px] min-w-[48px] touch-manipulation flex-col items-center justify-center rounded-xl transition hover:opacity-90 disabled:opacity-50"
-                        style={{ backgroundColor: BLUE_MEDICAL }}
-                        aria-label="Ver PDF"
-                      >
-                        <EyeIcon className="text-white" />
-                        <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
-                          Ver
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleCompartir(entry)}
-                        disabled={isBusy}
-                        className="flex min-h-[48px] min-w-[48px] flex-col items-center justify-center rounded-xl bg-emerald-600 transition hover:bg-emerald-500 disabled:opacity-50"
-                        aria-label="Compartir PDF"
-                      >
-                        <ShareIcon className="text-white" />
-                        <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
-                          Compartir
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDeleteConfirmId(entry.id)}
-                        disabled={isBusy}
-                        className="flex min-h-[48px] min-w-[48px] flex-col items-center justify-center rounded-xl bg-red-600/90 transition hover:bg-red-600 disabled:opacity-50"
-                        aria-label="Eliminar del historial"
-                      >
-                        <TrashIcon className="text-white" />
-                        <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
-                          Eliminar
-                        </span>
-                      </button>
-                    </div>
-                  </div>
-                </li>
-              );
+                  </li>
+                );
+              } catch (err) {
+                console.warn("Historial: item corrupto omitido", entry, err);
+                return (
+                  <li
+                    key={entry?.id ?? `error-${index}`}
+                    className="overflow-hidden rounded-xl border border-slate-600 p-4 text-slate-400"
+                    style={{ backgroundColor: CARD_BG }}
+                  >
+                    <p className="text-sm">Datos no disponibles</p>
+                  </li>
+                );
+              }
             })}
           </ul>
         )}

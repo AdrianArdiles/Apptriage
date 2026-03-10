@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
@@ -14,6 +14,12 @@ export const metadata: Metadata = {
   description: "Ficha clínica digital para paramédicos: XABCDE, Glasgow, signos vitales, timestamps.",
 };
 
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -21,7 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body className={`${inter.variable} font-sans min-h-screen`}>
+      <body className={`${inter.variable} font-sans min-h-screen pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]`}>
         <AuthProvider>
         <AuthObserver />
         {children}
