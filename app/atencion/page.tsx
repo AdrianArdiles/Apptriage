@@ -236,7 +236,7 @@ function AtencionContent(): React.ReactElement | null {
 
   return (
     <div
-      className={`flex h-screen flex-col overflow-hidden font-sans text-slate-100 transition-all duration-300 ${
+      className={`flex h-[100dvh] flex-col overflow-hidden font-sans text-slate-100 transition-all duration-300 ${
         mounted ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
       }`}
       style={{ backgroundColor: BG_DARK }}

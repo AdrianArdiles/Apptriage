@@ -878,8 +878,8 @@ export function ChecklistXABCDE({ onSubmit, onNuevaAtencion, onFinalizarSuccess,
         <div className="pt-2">{renderStepContent()}</div>
       </div>
 
-      {/* Barra de navegación anclada al viewport (fixed); RCP flotante encima */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-800 bg-slate-900 p-4">
+      {/* Barra de navegación anclada al viewport (fixed); safe area para barra de gestos Android */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-800 bg-slate-900 p-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
         {/* FAB RCP: justo encima de la barra */}
         <div
           className="absolute bottom-[calc(100%+1rem)] right-4 z-10 flex h-11 w-11 items-center justify-center rounded-full shadow-lg backdrop-blur-md transition active:scale-95"

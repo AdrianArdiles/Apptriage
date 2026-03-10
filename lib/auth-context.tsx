@@ -52,6 +52,16 @@ function authorizedToProfile(a: AuthorizedUser): UserProfile {
 
 const AUTH_ERROR_VERIFY = "No se pudo verificar la autorización. Revisá la conexión e intentá de nuevo.";
 
+/** Detecta errores de Firestore por offline / transport (no cerrar sesión ni bloquear entrada). */
+function isFirestoreOfflineError(e: unknown): boolean {
+  if (e && typeof e === "object" && "code" in e) {
+    const code = String((e as { code: string }).code);
+    if (code === "unavailable") return true;
+  }
+  const msg = e && typeof e === "object" && "message" in e ? String((e as { message: string }).message) : String(e);
+  return /transport errored|client is offline|failed to get document|connection/i.test(msg);
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }): React.ReactElement {
   const [user, setUser] = React.useState<User | null>(null);
   const [profile, setProfile] = React.useState<UserProfile | null>(null);
@@ -77,7 +87,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         setAuthorizedUser(null);
         setProfile(null);
       }
-    } catch {
+    } catch (err) {
+      if (isFirestoreOfflineError(err)) {
+        // No cerrar sesión ni marcar no autorizado; Firestore puede reconectar en segundo plano
+        console.warn("[Auth] Firestore offline en refreshProfile; se mantiene sesión.");
+        return;
+      }
       setAuthorizedUser(null);
       setProfile(null);
       setAuthError(AUTH_ERROR_VERIFY);
@@ -109,8 +124,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
       syncFromProfile({ nombre: fallbackAuth.nombre, apellido: "", matricula: fallbackAuth.matricula });
       setLoading(false);
 
-      // En segundo plano: sync con Neon y Firestore. Si sync devuelve 200, acceso ya permitido.
-      // Si Firestore falla (Transport Errored / offline), no redirigir ni bloquear.
+      // En segundo plano: sync con Neon y Firestore. signIn exitoso + sync 200 = entrada permitida.
+      // Si Firestore devuelve unavailable / transport errored, no se cierra sesión; el usuario ya está dentro.
       (async () => {
         const syncResult = await syncUserToBackend(u.uid, u.email ?? "");
         if (syncResult.ok && syncResult.status === 200) {
@@ -121,13 +136,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }): React
         try {
           await ensureUserDocument(u.uid, u.email ?? "");
         } catch (e) {
-          console.warn("[Firestore users] No se pudo crear documento de usuario (puede estar offline):", e);
+          if (!isFirestoreOfflineError(e)) console.warn("[Firestore users] No se pudo crear documento:", e);
         }
         try {
           const a = email && u.uid ? await getAuthorizedUserByEmailOrUserDoc(email, u.uid) : null;
           if (a) resolved = a;
         } catch (e) {
-          console.warn("[Firestore authorized_users] Lectura en segundo plano fallida (puede estar offline):", e);
+          if (!isFirestoreOfflineError(e)) console.warn("[Firestore authorized_users] Lectura en segundo plano fallida:", e);
         }
         setAuthorizedUser(resolved);
         setProfile(authorizedToProfile(resolved));
